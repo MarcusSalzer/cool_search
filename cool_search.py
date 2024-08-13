@@ -14,12 +14,12 @@ class CoolSearch:
     """Minimization of a black box function."""
 
     __slots__ = [
-        "objective",
+        "_objective",
         "dtype",
-        "fixed_params",
-        "ndim",
-        "param_range",
-        "param_types",
+        "_fixed_params",
+        "_ndim",
+        "_param_range",
+        "_param_types",
         "samples",
     ]
 
@@ -27,46 +27,61 @@ class CoolSearch:
         self,
         objective,
         param_range: dict,
-        param_types: dict[str, str] | None = None,
+        param_types: dict[str, Literal["int", "float"]] | None = None,
+        # min_delta? max_steps?
         fixed_params={},
-        dtype=pl.Float64,
     ) -> None:
         """Tools for minimizing a function.
 
         ## parameters
         - objective (callable):
+        - param_range (dict): ranges for all parameters
+        - param_types (dict): specify int or float types. (Defaults to float for all parameters)
+        - fixed_params (dict): fixed kwargs provided to `objective`.
 
         """
 
         # set constants
-        self.objective = objective
-        self.param_range = param_range
-        self.fixed_params = fixed_params
+        self._objective = objective
+        self._param_range = param_range
+        self._fixed_params = fixed_params
 
+        # set parameter types, default to float
         if param_types is None:
-            param_types = dict.fromkeys(param_range.keys(), dtype)
-        self.param_types = param_types
+            param_types = dict.fromkeys(param_range.keys(), "float")
 
-        self.ndim = len(self.param_range)
-        self.dtype = dtype
+        # Validate the parameter types
+        for param, p_type in param_types.items():
+            if p_type not in {"int", "float"}:
+                raise ValueError(
+                    f"Unsupported parameter type: '{p_type}' for parameter '{param}'."
+                )
 
-        schema = {param: self.dtype for param in param_range.keys()}
-        schema["score"] = self.dtype
-        schema["runtime"] = self.dtype
+        self._param_types = param_types
+        self._ndim = len(self._param_range)
 
+        # schema for parameters, score and runtime
+        schema = {
+            param: (pl.Float32 if dtype == "float" else pl.Int32)
+            for param, dtype in param_types.items()
+        }
+        schema["score"] = pl.Float64
+        schema["runtime"] = pl.Float64
+
+        # init empty samples-frame
         self.samples = pl.DataFrame(schema=schema)
 
     def __str__(self):
         return "\n".join(
             [
-                f"{self.ndim} dimensional search",
-                f"  - {len(self.samples)} samples",
+                f"{self._ndim} dimensional search",
+                f"  - has {len(self.samples)} samples",
             ],
         )
 
     @property
     def param_names(self):
-        return list(self.param_range.keys())
+        return list(self._param_range.keys())
 
     # def get_param_values(self, factors: pl.DataFrame | np.ndarray):
     #     """Compute actual parameter values from factor in [0,1]."""
@@ -92,44 +107,68 @@ class CoolSearch:
         """Get an evenly spaced grid for all parameters.
 
         ## Parameters
-        - steps (int): TODO
+        - steps (int): Number of steps/points per parameter
+            - Note: integer-parameters might get fewer steps to avoid duplicates.
 
         ## Returns
-        - grid (ndarray): array of points in parameter space
+        - grid (DataFrame): points in parameter space.
+            - each column has the apropriate data type.
         """
 
-        # TODO: handle datatypes
+        grid_points = []
+        for param, r in self._param_range.items():
+            param_type = self._param_types[param]
+            if param_type == "int":
+                # Generate evenly spaced integer points within the range
+                grid = np.linspace(r[0], r[1], steps, dtype=int)
+                grid_points.append(np.unique(grid))  # Ensure uniqueness
+            elif param_type == "float":
+                # Generate evenly spaced floating points within the range
+                grid_points.append(np.linspace(r[0], r[1], steps, dtype=float))
 
-        mesh = np.meshgrid(*[np.linspace(*r, steps) for r in self.param_range.values()])
-        return np.vstack(list(map(np.ravel, mesh))).T
+        # Create the grid by meshing and flattening the arrays
+        mesh = np.meshgrid(*grid_points, indexing="ij")
+        grid = [
+            dict(zip(self._param_range.keys(), point))
+            for point in zip(*(np.ravel(m) for m in mesh))
+        ]
+
+        return pl.DataFrame(
+            grid,
+            schema=self.samples.select(self.param_names).schema,
+            orient="row",
+        )
 
     def make_factor_grid(self, steps):
-        mesh = np.meshgrid(*[np.linspace(0, 1, steps)] * self.ndim)
+        mesh = np.meshgrid(*[np.linspace(0, 1, steps)] * self._ndim)
         return np.vstack(list(map(np.ravel, mesh))).T
 
     def grid_search(
         self,
         steps=10,
+        # TODO: Specify dimensions to grid, and strategy for others?
         target_runtime=None,
         verbose: Literal[0, 1, 2] = 1,
+        print_eta: bool = True,
     ):
-        """Evaluate objective on an evenly spaced grid"""
+        """Sample objective on an evenly spaced grid."""
 
         if target_runtime:
             if self.samples.is_empty():
                 if verbose >= 1:
                     print("No previous samples. Running 1 initial evaluation")
                 self.random_search(1)
+                # TODO: Replace with coarse grid (or 1 point central in grid)?
 
             # choose steps to approximately run for ´target_runtime´ seconds
             n_samples = target_runtime / self.samples["runtime"].mean()
-            steps = min(int(round(n_samples ** (1 / self.ndim))), 1)
+            steps = min(int(round(n_samples ** (1 / self._ndim))), 1)
             if verbose >= 1:
                 print(
                     "\n".join(
                         [
                             f"choose {steps} steps",
-                            f"  -> maximum {steps**self.ndim} samples",
+                            f"  -> maximum {steps**self._ndim} samples",
                         ]
                     )
                 )
@@ -138,8 +177,7 @@ class CoolSearch:
 
         param_names = self.param_names
 
-        # TODO fixa det här
-        grid = pl.DataFrame(self.get_grid(steps), schema=param_names)
+        grid = self.get_grid(steps)
 
         # avoid previously sampled points
         grid_new = grid.join(
@@ -159,12 +197,14 @@ class CoolSearch:
         #     .map_elements(lambda row: self.objective(**row), return_dtype=self.dtype)
         #     .alias("score")
         # )
+
         scores_new = []
         runtimes_new = []
         for row in grid_new.iter_rows(named=True):
             t_run = default_timer()
-            scores_new.append(self.objective(**row, **self.fixed_params))
+            scores_new.append(self._objective(**row, **self._fixed_params))
             runtimes_new.append(default_timer() - t_run)
+            # TODO: update time remaining estimate
 
         grid_new = grid_new.with_columns(
             score=pl.Series(scores_new),
@@ -180,10 +220,10 @@ class CoolSearch:
         return grid_new
 
     def random_search(self, N, seed=None, verbose: Literal[0, 1, 2] = 1):
-        """Sample N random points."""
+        """Sample objective at N randomly chosen points."""
         rng = np.random.default_rng(seed)
 
-        samples = rng.uniform(0, 1, (N, self.ndim))
+        samples = rng.uniform(0, 1, (N, self._ndim))  # TODO: fix proper random samples.
         if verbose >= 1:
             # print(f"searching {len(grid_new)} new parameter points")
             if not self.samples.is_empty():

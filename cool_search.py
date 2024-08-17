@@ -103,8 +103,13 @@ class CoolSearch:
     #         factors * scale + offset, schema={k: self.param_types[k] for k in names}
     #     )
 
-    def get_grid(self, steps):
-        """Get an evenly spaced grid for all parameters.
+    def get_grid(
+        self,
+        steps,
+        distribution: Literal["even", "random"] = "even",
+        seed=None,
+    ):
+        """Get a grid for all parameters.
 
         ## Parameters
         - steps (int): Number of steps/points per parameter
@@ -112,19 +117,30 @@ class CoolSearch:
 
         ## Returns
         - grid (DataFrame): points in parameter space.
-            - each column has the apropriate data type.
         """
+
+        # TODO THIS ISNT RANDOM IN A SENSE!
+
+        if distribution == "random":
+            rng = np.random.default_rng(seed)
 
         grid_points = []
         for param, r in self._param_range.items():
             param_type = self._param_types[param]
             if param_type == "int":
-                # Generate evenly spaced integer points within the range
-                grid = np.linspace(r[0], r[1], steps, dtype=int)
-                grid_points.append(np.unique(grid))  # Ensure uniqueness
+                if distribution == "even":
+                    grid = np.unique(np.linspace(r[0], r[1], steps, dtype=int))
+                elif distribution == "random":
+                    grid = np.unique(rng.integers(r[0], r[1], steps))
             elif param_type == "float":
-                # Generate evenly spaced floating points within the range
-                grid_points.append(np.linspace(r[0], r[1], steps, dtype=float))
+                if distribution == "even":
+                    grid = np.linspace(r[0], r[1], steps, dtype=float)
+                elif distribution == "random":
+                    grid = rng.uniform(r[0], r[1], steps)
+            else:
+                raise ValueError(f"Unsupported parameter type ({param_type})")
+
+            grid_points.append(grid)
 
         # Create the grid by meshing and flattening the arrays
         mesh = np.meshgrid(*grid_points, indexing="ij")
@@ -139,30 +155,71 @@ class CoolSearch:
             orient="row",
         )
 
+    def get_random_samples(
+        self,
+        N,
+        seed=None,
+    ):
+        rng = np.random.default_rng(seed)
+
+        grid = []
+        for _ in range(N):
+            param_values = []
+            for param, r in self._param_range.items():
+                param_type = self._param_types[param]
+
+                if param_type == "int":
+                    param_values.append(rng.integers(r[0], r[1]))
+                elif param_type == "float":
+                    param_values.append(rng.uniform(r[0], r[1]))
+
+            grid.append(param_values)
+
+        return pl.DataFrame(
+            grid,
+            schema=self.samples.select(self.param_names).schema,
+            orient="row",
+        )
+
     def make_factor_grid(self, steps):
         mesh = np.meshgrid(*[np.linspace(0, 1, steps)] * self._ndim)
         return np.vstack(list(map(np.ravel, mesh))).T
 
     def grid_search(
         self,
-        steps=10,
-        # TODO: Specify dimensions to grid, and strategy for others?
+        steps=10,  # TODO: allow dict of steps per param!
+        # TODO: Specify dimensions to grid, and strategy for others? (include in above dict)
         target_runtime=None,
-        verbose: Literal[0, 1, 2] = 1,
-        print_eta: bool = True,
+        verbose: Literal[0, 1, 2] = 2,
+        etr_update_step: int = 1,
     ):
-        """Sample objective on an evenly spaced grid."""
+        """Sample objective on an evenly spaced grid.
+
+        ## Parameters
+        - steps (TODO)
+        - target_runtime (float): target time (seconds) to estimate number of steps.
+        - verbose (int): amount of status information printed
+            - 0: no prints
+            - 1: setup, summary
+            - 2: setup, summary, progress.
+        - etr_update_step (int): if `verbose>=2`, how often to print updates.
+
+
+        ## Returns
+        - grid_new (DataFrame): new sampled points
+
+        Note: to get all sampled points, use `self.samples`.
+
+        """
 
         if target_runtime:
             if self.samples.is_empty():
                 if verbose >= 1:
                     print("No previous samples. Running 1 initial evaluation")
-                self.random_search(1)
-                # TODO: Replace with coarse grid (or 1 point central in grid)?
-
+                self.grid_search(steps=1, verbose=0)
             # choose steps to approximately run for ´target_runtime´ seconds
             n_samples = target_runtime / self.samples["runtime"].mean()
-            steps = min(int(round(n_samples ** (1 / self._ndim))), 1)
+            steps = max(int(round(n_samples ** (1 / self._ndim))), 1)
             if verbose >= 1:
                 print(
                     "\n".join(
@@ -187,10 +244,10 @@ class CoolSearch:
         )
 
         if verbose >= 1:
-            print(f"searching {len(grid_new)} new parameter points")
+            print(f"Searching {len(grid_new)} new parameter points")
             if not self.samples.is_empty():
                 est_runtime = len(grid_new) * self.samples["runtime"].mean()
-                print(f"estimated runtime: {est_runtime:.4f} s.")
+                print(f"Estimated runtime: {est_runtime:.4f} s.")
 
         # grid_new = grid_new.with_columns(
         #     pl.struct(param_names)
@@ -204,7 +261,13 @@ class CoolSearch:
             t_run = default_timer()
             scores_new.append(self._objective(**row, **self._fixed_params))
             runtimes_new.append(default_timer() - t_run)
-            # TODO: update time remaining estimate
+
+            if verbose >= 2 and ((len(runtimes_new) - 1) % etr_update_step == 0):
+                # est time remaining based on old and new samples
+                total_runtime = self.samples["runtime"].sum() + sum(runtimes_new)
+                mean_runtime = total_runtime / (len(self.samples) + len(runtimes_new))
+                etr = (len(grid_new) - len(runtimes_new)) * mean_runtime
+                print(f"Estimated time remaining: {etr:.1f}...", end="\r")
 
         grid_new = grid_new.with_columns(
             score=pl.Series(scores_new),
@@ -215,12 +278,19 @@ class CoolSearch:
         runtime_sum = sum(runtimes_new)
         t_overhead = default_timer() - t_start - runtime_sum
         if verbose >= 1:
-            print(f"total runtime: {runtime_sum:.4f} s + overhead: {t_overhead:.4f} s.")
+            print(f"Total runtime: {runtime_sum:.4f} s + overhead: {t_overhead:.4f} s.")
 
         return grid_new
 
-    def random_search(self, N, seed=None, verbose: Literal[0, 1, 2] = 1):
+    def random_search(
+        self,
+        N,
+        target_runtime=None,  # TODO make a function for est this
+        seed=None,
+        verbose: Literal[0, 1, 2] = 1,
+    ):
         """Sample objective at N randomly chosen points."""
+        # TODO remove this? have parametr on gridserach`?`
         rng = np.random.default_rng(seed)
 
         samples = rng.uniform(0, 1, (N, self._ndim))  # TODO: fix proper random samples.
@@ -235,3 +305,30 @@ class CoolSearch:
         """Specify a 'macro-program' to run multiple searches."""
         # idea. run sequentially, /and parallel?
         # allow for conditions to choose next step
+
+    def marginals(self):
+        """Aggregate over unique parameter values each parameter.
+
+        ## Returns
+        - marginals (dict[str,DataFrame]): aggregated scores for each parameter.
+            - columns: parameter, mean, std, median
+        """
+        marginals = {}
+        for param in self._param_range.keys():
+            marginals[param] = (
+                self.samples.group_by(param)
+                .agg(
+                    pl.col("score").mean().alias("mean"),
+                    pl.col("score").std().alias("std"),
+                    pl.col("score").median().alias("median"),
+                )
+                .sort(param)
+            )
+
+        return marginals
+
+    def model_poly():
+        """Polynomial model of function"""
+
+    def model_GP():
+        """Gaussian process model of function"""

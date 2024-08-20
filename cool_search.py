@@ -3,11 +3,6 @@ from typing import Literal
 
 import numpy as np
 import polars as pl
-from plotly import graph_objects as go
-from scipy import stats
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process import kernels as gpk
-from sklearn.neighbors import KernelDensity
 
 
 class CoolSearch:
@@ -102,6 +97,10 @@ class CoolSearch:
     #     return pl.DataFrame(
     #         factors * scale + offset, schema={k: self.param_types[k] for k in names}
     #     )
+
+    @classmethod
+    def from_classifier():
+        pass  # ??
 
     def get_grid(
         self,

@@ -51,6 +51,9 @@ class CoolSearch:
                 raise ValueError(
                     f"Unsupported parameter type: '{p_type}' for parameter '{param}'."
                 )
+        # Validate dict keys
+        if set(param_range.keys()) != set(param_types.keys()):
+            raise ValueError("Inconsistent parameter names")
 
         self._param_types = param_types
         self._ndim = len(self._param_range)
@@ -105,7 +108,7 @@ class CoolSearch:
     def get_grid(
         self,
         steps,
-        distribution: Literal["even", "random"] = "even",
+        distribution: Literal["even", "random"] = "even",  # deprecated?
         seed=None,
     ):
         """Get a grid for all parameters.
@@ -173,6 +176,8 @@ class CoolSearch:
                     param_values.append(rng.uniform(r[0], r[1]))
 
             grid.append(param_values)
+
+        # TODO: only keep unique
 
         return pl.DataFrame(
             grid,

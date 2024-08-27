@@ -1,8 +1,15 @@
 import unittest
-from cool_search import CoolSearch
+import sys
+import os
+import polars as pl
 
-# import polars as pl
-import math
+sys.path.append(
+    os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../src"),
+    ),
+)
+
+from cool_search import CoolSearch
 
 
 class TestCoolSearch1D(unittest.TestCase):
@@ -48,6 +55,34 @@ class TestCoolSearch1D(unittest.TestCase):
         )
 
 
+class TestCoolSearch2Dint(unittest.TestCase):
+    def setUp(self) -> None:
+        def f(x, y):
+            return x**2 + (y - 1) ** 2
+
+        self.objective = f
+        self.search = CoolSearch(
+            self.objective,
+            param_range={
+                "x": (0, 2),
+                "y": (0, 2),
+            },
+            param_types={
+                "x": "int",
+                "y": "int",
+            },
+        )
+
+    def test_random_unique(self):
+        grid = self.search.get_random_samples(100)
+
+        self.assertListEqual(
+            [t in pl.INTEGER_DTYPES for t in grid.dtypes],
+            [True, True],
+            "incorrect datatypes",
+        )
+
+
 class TestCoolSearch3D(unittest.TestCase):
     def setUp(self) -> None:
         def f(x, y, z):
@@ -67,6 +102,11 @@ class TestCoolSearch3D(unittest.TestCase):
         grid = self.search.get_random_samples(50)
         self.assertEqual(grid.columns, ["x", "y", "z"], "wrong columns")
         self.assertEqual(len(grid), 50, "wrong length")
+
+    def test_grid(self):
+        grid = self.search.get_grid(4)
+        self.assertEqual(grid.columns, ["x", "y", "z"], "wrong columns")
+        self.assertEqual(len(grid), 4**3, "wrong length")
 
 
 if __name__ == "__main__":

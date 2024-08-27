@@ -105,12 +105,7 @@ class CoolSearch:
     def from_classifier():
         pass  # ??
 
-    def get_grid(
-        self,
-        steps,
-        distribution: Literal["even", "random"] = "even",  # deprecated?
-        seed=None,
-    ):
+    def get_grid(self, steps):
         """Get a grid for all parameters.
 
         ## Parameters
@@ -121,24 +116,13 @@ class CoolSearch:
         - grid (DataFrame): points in parameter space.
         """
 
-        # TODO THIS ISNT RANDOM IN A SENSE!
-
-        if distribution == "random":
-            rng = np.random.default_rng(seed)
-
         grid_points = []
         for param, r in self._param_range.items():
             param_type = self._param_types[param]
             if param_type == "int":
-                if distribution == "even":
-                    grid = np.unique(np.linspace(r[0], r[1], steps, dtype=int))
-                elif distribution == "random":
-                    grid = np.unique(rng.integers(r[0], r[1], steps))
+                grid = np.unique(np.linspace(r[0], r[1], steps, dtype=int))
             elif param_type == "float":
-                if distribution == "even":
-                    grid = np.linspace(r[0], r[1], steps, dtype=float)
-                elif distribution == "random":
-                    grid = rng.uniform(r[0], r[1], steps)
+                grid = np.linspace(r[0], r[1], steps, dtype=float)
             else:
                 raise ValueError(f"Unsupported parameter type ({param_type})")
 

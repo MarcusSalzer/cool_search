@@ -7,6 +7,7 @@ import math
 import numpy as np
 import sympy as sp
 from plotly import io as pio
+from time import sleep
 
 
 def set_plotly_template():
@@ -78,3 +79,11 @@ def polynomial_features(X, d, verbose=True):
             column += 1
 
     return X_new
+
+
+def test_function_01(x, delay=0):
+    """1D curve, with a clear minimum"""
+    if delay > 0:
+        sleep(delay)
+
+    return np.sqrt((x - 2) ** 2 + 1) + np.sin(x / 2)

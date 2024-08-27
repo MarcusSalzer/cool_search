@@ -47,7 +47,17 @@ class PolynomialModel:
             if N < M:
                 print("Note: under-determined system")
 
-        self.beta = np.linalg.lstsq(X, y, rcond=None)
+        self.beta, self.residuals, _, _ = np.linalg.lstsq(X, y, rcond=None)
+
+        if verbose:
+            print(f"coefficients: {self.beta}")
+
+    @property
+    def polynomial(self):
+        if len(self.features) != 1:
+            raise NotImplementedError
+
+        return np.polynomial.Polynomial(self.beta)
 
     def predict(
         self,

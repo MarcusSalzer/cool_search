@@ -1,4 +1,3 @@
-from cool_search_models import PolynomialModel, polynomial_features
 import os
 import sys
 import unittest
@@ -6,11 +5,8 @@ import unittest
 import numpy as np
 import polars as pl
 
-sys.path.append(
-    os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "../src"),
-    ),
-)
+from coolsearch.models import PolynomialModel, polynomial_features
+import coolsearch.utility_functions as util
 
 
 # decimals to compare for numerical accuracy
@@ -19,7 +15,7 @@ DECIMALS = 10
 
 class TestPolyModel1D(unittest.TestCase):
     def setUp(self) -> None:
-        self.f = lambda x: util.test_function_01(x, 0.01)
+        self.f = lambda x: util.test_function_01(x, 0.001)
         self.samples = pl.DataFrame({"x": np.linspace(-10, 10, 5)})
         self.samples = self.samples.with_columns(
             pl.col("x").map_elements(
@@ -61,13 +57,14 @@ class TestPolyModel1D(unittest.TestCase):
         )
 
         self.assertListEqual(
-            f_poly.tolist(),
-            f_pred.tolist(),
+            f_poly.round(DECIMALS).tolist(),
+            f_pred.round(DECIMALS).tolist(),
             "predict not consistent with polynomial",
         )
 
-        self.assertListEqual(model.residuals.tolist(), [
-                             0] * len(self.samples), "nonzero residuals for exact fit",)
+        self.assertEqual(model.residuals.tolist(),
+                         [],
+                         "nonzero residuals for exact fit",)
 
 
 class TestPolyFeat(unittest.TestCase):

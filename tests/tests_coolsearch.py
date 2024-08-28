@@ -4,7 +4,7 @@ import os
 import polars as pl
 
 
-from cool_search import CoolSearch
+from coolsearch.search import CoolSearch
 
 
 class TestCoolSearch1D(unittest.TestCase):
@@ -71,8 +71,9 @@ class TestCoolSearch2Dint(unittest.TestCase):
     def test_random_unique(self):
         grid = self.search.get_random_samples(100)
 
+        ok_types = {pl.Int32, pl.Int64}
         self.assertListEqual(
-            [t in pl.INTEGER_DTYPES for t in grid.dtypes],
+            [t in ok_types for t in grid.dtypes],
             [True, True],
             "incorrect datatypes",
         )

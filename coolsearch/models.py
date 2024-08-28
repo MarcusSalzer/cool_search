@@ -49,10 +49,10 @@ class PolynomialModel:
         beta, res, _, _ = np.linalg.lstsq(X, y, rcond=None)
 
         self.beta = beta
-        self.residual = res.item()
+        self.residuals = res
 
         if verbose:
-            print(f"coefficients: {self.beta}")
+            print(f"coefficients: {beta}, residuals: {res}")
 
     @property
     def polynomial(self):

@@ -6,7 +6,6 @@ import math
 from typing import Literal
 
 import numpy as np
-import sympy as sp
 import polars as pl
 from plotly import io as pio
 from time import sleep
@@ -48,7 +47,7 @@ def monomials(N, d):
 
     assert len(monomials) == math.comb(N + d, d), "Total count"
 
-    return [sp.Symbol(p) for p in monomials]
+    return monomials
 
 
 def test_function_01(x, delay=0):

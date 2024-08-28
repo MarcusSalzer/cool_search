@@ -1,4 +1,7 @@
 # %%
+import coolsearch.utility_functions as util
+import coolsearch.models as cm
+import coolsearch.search as cool
 from importlib import reload
 from time import sleep
 
@@ -9,9 +12,6 @@ import sys
 
 sys.path.append("src")
 
-import src.cool_search as cool
-import src.cool_search_models as cm
-import src.utility_functions as util
 
 util.set_plotly_template()
 

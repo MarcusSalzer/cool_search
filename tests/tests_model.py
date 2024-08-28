@@ -1,3 +1,4 @@
+from cool_search_models import PolynomialModel, polynomial_features
 import os
 import sys
 import unittest
@@ -11,8 +12,6 @@ sys.path.append(
     ),
 )
 
-from cool_search_models import PolynomialModel, polynomial_features
-import utility_functions as util
 
 # decimals to compare for numerical accuracy
 DECIMALS = 10
@@ -23,7 +22,8 @@ class TestPolyModel1D(unittest.TestCase):
         self.f = lambda x: util.test_function_01(x, 0.01)
         self.samples = pl.DataFrame({"x": np.linspace(-10, 10, 5)})
         self.samples = self.samples.with_columns(
-            pl.col("x").map_elements(self.f, return_dtype=pl.Float64).alias("f"),
+            pl.col("x").map_elements(
+                self.f, return_dtype=pl.Float64).alias("f"),
         )
 
     def test_degree2(self):
@@ -46,7 +46,8 @@ class TestPolyModel1D(unittest.TestCase):
         )
 
     def test_exact_degree(self):
-        model = PolynomialModel(self.samples, ["x"], len(self.samples) - 1, target="f")
+        model = PolynomialModel(
+            self.samples, ["x"], len(self.samples) - 1, target="f")
         model.fit(verbose=False)
 
         f_true = self.samples["f"].to_numpy()
@@ -64,6 +65,9 @@ class TestPolyModel1D(unittest.TestCase):
             f_pred.tolist(),
             "predict not consistent with polynomial",
         )
+
+        self.assertListEqual(model.residuals.tolist(), [
+                             0] * len(self.samples), "nonzero residuals for exact fit",)
 
 
 class TestPolyFeat(unittest.TestCase):

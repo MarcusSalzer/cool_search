@@ -3,11 +3,6 @@ import sys
 import os
 import polars as pl
 
-sys.path.append(
-    os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "../src"),
-    ),
-)
 
 from cool_search import CoolSearch
 

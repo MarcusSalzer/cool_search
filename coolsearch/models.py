@@ -1,7 +1,6 @@
+import math
 import numpy as np
 import polars as pl
-
-from utility_functions import polynomial_features
 
 
 class PolynomialModel:
@@ -47,7 +46,10 @@ class PolynomialModel:
             if N < M:
                 print("Note: under-determined system")
 
-        self.beta, self.residuals, _, _ = np.linalg.lstsq(X, y, rcond=None)
+        beta, res, _, _ = np.linalg.lstsq(X, y, rcond=None)
+
+        self.beta = beta
+        self.residual = res.item()
 
         if verbose:
             print(f"coefficients: {self.beta}")
@@ -73,3 +75,36 @@ class PolynomialModel:
         y_pred = X_poly @ self.beta
 
         return y_pred
+
+
+def polynomial_features(X: np.ndarray, d: int, verbose=True):
+    """Create polynomial features of terms up to a degree (including constant).
+    ## parameters
+    - X (ndarray): original feature matrix, shape (N, n_feat)
+    - d (int): maximum degree
+    ## returns
+    - X_new (ndarray): extended feature matrix, shape (N, comb(n_feat+d, d))
+
+    Note: output feature order is consistent, but not lexicographic/intuitive.
+    """
+
+    N, n_feat = X.shape
+    n_feat_new = math.comb(n_feat + d, d)
+    X_new = np.empty((N, n_feat_new), X.dtype)
+    X_new[:, 0] = 1  # constant term
+
+    if verbose:
+        print(f"{n_feat} -> {n_feat_new} features:")
+
+    combinations = np.stack(
+        [x.ravel() for x in np.meshgrid(*[range(d + 1)] * n_feat)]
+    ).T
+
+    column = 1
+    for pows in combinations:
+        if 1 <= sum(pows) <= d:
+            f_new = (X**pows).prod(axis=1)
+            X_new[:, column] = f_new
+            column += 1
+
+    return X_new

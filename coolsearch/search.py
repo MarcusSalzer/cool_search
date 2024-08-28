@@ -252,8 +252,10 @@ class CoolSearch:
 
             if verbose >= 2 and ((len(runtimes_new) - 1) % etr_update_step == 0):
                 # est time remaining based on old and new samples
-                total_runtime = self.samples["runtime"].sum() + sum(runtimes_new)
-                mean_runtime = total_runtime / (len(self.samples) + len(runtimes_new))
+                total_runtime = self.samples["runtime"].sum(
+                ) + sum(runtimes_new)
+                mean_runtime = total_runtime / \
+                    (len(self.samples) + len(runtimes_new))
                 etr = (len(grid_new) - len(runtimes_new)) * mean_runtime
                 print(f"Estimated time remaining: {etr:.1f}...", end="\r")
 
@@ -266,7 +268,8 @@ class CoolSearch:
         runtime_sum = sum(runtimes_new)
         t_overhead = default_timer() - t_start - runtime_sum
         if verbose >= 1:
-            print(f"Total runtime: {runtime_sum:.4f} s + overhead: {t_overhead:.4f} s.")
+            print(
+                f"Total runtime: {runtime_sum:.4f} s + overhead: {t_overhead:.4f} s.")
 
         return grid_new
 
@@ -281,7 +284,8 @@ class CoolSearch:
         # TODO remove this? have parametr on gridserach`?`
         rng = np.random.default_rng(seed)
 
-        samples = rng.uniform(0, 1, (N, self._ndim))  # TODO: fix proper random samples.
+        # TODO: fix proper random samples.
+        samples = rng.uniform(0, 1, (N, self._ndim))
         if verbose >= 1:
             # print(f"searching {len(grid_new)} new parameter points")
             if not self.samples.is_empty():

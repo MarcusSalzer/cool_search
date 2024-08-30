@@ -62,9 +62,30 @@ class TestPolyModel1D(unittest.TestCase):
             "predict not consistent with polynomial",
         )
 
-        self.assertEqual(model.residuals.tolist(),
-                         [],
-                         "nonzero residuals for exact fit",)
+        self.assertEqual(
+            model.residuals.tolist(),
+            [],
+            "nonzero residuals for exact fit",
+        )
+
+
+class TestPolymodel1dCorrectPoly(unittest.TestCase):
+    def setUp(self) -> None:
+        self.samples = pl.DataFrame({"x": np.linspace(-10, 10, 5)})
+        self.samples = self.samples.with_columns(
+            ((7 - (3 * pl.col("x"))) + (pl.col("x") ** 2)).alias("f"),
+        )
+
+    def test_quadratic(self):
+        model = PolynomialModel(self.samples, ["x"], 2, target="f")
+
+        model.fit(verbose=False)
+        beta = model.beta
+        self.assertListEqual(
+            beta.round(DECIMALS).tolist(),
+            [7, -3, 1],
+            "Incorrect coefficients for quadratic fit",
+        )
 
 
 class TestPolyFeat(unittest.TestCase):
@@ -72,8 +93,15 @@ class TestPolyFeat(unittest.TestCase):
         X = np.array([[1, 2, 3]]).T
         X_correct = np.array([[1, 1, 1], [1, 2, 3], [1, 4, 9], [1, 8, 27]]).T
         X_new = polynomial_features(X, 3, verbose=False)
-        self.assertEqual(X_new.shape, X_correct.shape, "incorrect shape")
-        self.assertTrue((X_new == X_correct).all(), "incorrect array values")
+        self.assertEqual(
+            X_new.shape,
+            X_correct.shape,
+            "incorrect shape",
+        )
+        self.assertTrue(
+            (X_new == X_correct).all(),
+            "incorrect array values",
+        )
 
 
 if __name__ == "__main__":

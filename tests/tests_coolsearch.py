@@ -105,5 +105,17 @@ class TestCoolSearch3D(unittest.TestCase):
         self.assertEqual(len(grid), 4**3, "wrong length")
 
 
+class TestPolymodel(unittest.TestCase):
+    def setUp(self) -> None:
+        def f(x, y):
+            return x**2 + (y - 1) ** 2
+
+        self.search = CoolSearch(f, {"x": (-5, 5), "y": (-5, 5)})
+
+    def test_error(self):
+        with self.assertRaises(ValueError):
+            self.search.model_poly(2)
+
+
 if __name__ == "__main__":
     unittest.main()

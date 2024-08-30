@@ -13,7 +13,6 @@ A package for optimizing black-box functions.
 ## Todo
 
 - Move plotting outside of package!
-- Polynomial optimization
 - Gaussian process model
 
 ## note

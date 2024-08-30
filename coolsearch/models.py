@@ -1,16 +1,22 @@
 import math
+from typing import Literal
 import numpy as np
 import polars as pl
+
+import coolsearch.utility_functions as util
 
 
 class PolynomialModel:
     """Polynomial regression"""
 
+    # TODO slots
+
     def __init__(
         self,
         samples: pl.DataFrame,
-        features: list[str],
+        features: list[str] | None = None,
         degree: int = 1,
+        param_range: dict | None = None,
         interaction: bool = True,
         target: str = "score",
     ) -> None:
@@ -18,10 +24,24 @@ class PolynomialModel:
             raise NotImplementedError("only with interactions now")
 
         self.degree = degree
-        self.features = features
+
+        # initialize ranges if missing
+        if param_range is None:
+            param_range = dict.fromkeys(features)
+            for k in features:
+                param_range[k] = (
+                    samples[k].min(),
+                    samples[k].max(),
+                )
+        self.param_range = param_range
+
+        if param_range:
+            self.features = list(map(str, param_range.keys()))
+        else:
+            self.features = features
 
         self.y = samples[target].to_numpy()
-        X = samples.select(features).to_numpy()
+        X = samples.select(self.features).to_numpy()
         self.X_poly = polynomial_features(X, self.degree, verbose=False)
 
         if self.y.shape[0] != self.X_poly.shape[0]:
@@ -75,6 +95,22 @@ class PolynomialModel:
         y_pred = X_poly @ self.beta
 
         return y_pred
+
+    def minimum_numeric(self, steps=10):
+        """Evaluate polynomial on a (float type) grid, and find minimum"""
+
+        high_res = util.get_grid(
+            steps,
+            self.param_range,
+            dict.fromkeys(self.features, "float"),
+        )
+        # add predictions
+        high_res = high_res.with_columns(value=self.predict(samples=high_res))
+
+        minimum = high_res.filter(
+            pl.col("value") == pl.col("value").min()
+        )
+        return minimum, high_res
 
 
 def polynomial_features(X: np.ndarray, d: int, verbose=True):

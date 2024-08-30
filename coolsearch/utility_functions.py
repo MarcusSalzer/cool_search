@@ -19,6 +19,47 @@ def set_plotly_template():
     pio.templates.default = plot_temp
 
 
+def get_grid(
+    steps,
+    param_range: dict[str, tuple],
+    param_types: dict[str, Literal["float", "int"]],
+):
+    """Get a grid for all parameters.
+
+    ## Parameters
+    - steps (int): Number of steps/points per parameter
+        - Note: integer-parameters might get fewer steps to avoid duplicates.
+
+    ## Returns
+    - grid (DataFrame): points in parameter space.
+    """
+
+    grid_points = []
+    for param, r in param_range.items():
+        param_type = param_types[param]
+        if param_type == "int":
+            grid = np.unique(np.linspace(r[0], r[1], steps, dtype=int))
+        elif param_type == "float":
+            grid = np.linspace(r[0], r[1], steps, dtype=float)
+        else:
+            raise ValueError(f"Unsupported parameter type ({param_type})")
+
+        grid_points.append(grid)
+
+    # Create the grid by meshing and flattening the arrays
+    mesh = np.meshgrid(*grid_points, indexing="ij")
+    grid = [
+        dict(zip(param_range.keys(), point))
+        for point in zip(*(np.ravel(m) for m in mesh))
+    ]
+
+    return pl.DataFrame(
+        grid,
+        schema=param_range.keys(),
+        orient="row",
+    )
+
+
 def monomials(N, d):
     """Create sympy-symbols of terms up to a degree.
     ## parameters

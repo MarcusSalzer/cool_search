@@ -4,6 +4,9 @@ from typing import Literal
 import numpy as np
 import polars as pl
 
+from coolsearch.models import PolynomialModel
+import coolsearch.utility_functions as util
+
 
 class CoolSearch:
     """Minimization of a black box function."""
@@ -105,41 +108,8 @@ class CoolSearch:
     def from_classifier():
         pass  # ??
 
-    def get_grid(self, steps):
-        """Get a grid for all parameters.
-
-        ## Parameters
-        - steps (int): Number of steps/points per parameter
-            - Note: integer-parameters might get fewer steps to avoid duplicates.
-
-        ## Returns
-        - grid (DataFrame): points in parameter space.
-        """
-
-        grid_points = []
-        for param, r in self._param_range.items():
-            param_type = self._param_types[param]
-            if param_type == "int":
-                grid = np.unique(np.linspace(r[0], r[1], steps, dtype=int))
-            elif param_type == "float":
-                grid = np.linspace(r[0], r[1], steps, dtype=float)
-            else:
-                raise ValueError(f"Unsupported parameter type ({param_type})")
-
-            grid_points.append(grid)
-
-        # Create the grid by meshing and flattening the arrays
-        mesh = np.meshgrid(*grid_points, indexing="ij")
-        grid = [
-            dict(zip(self._param_range.keys(), point))
-            for point in zip(*(np.ravel(m) for m in mesh))
-        ]
-
-        return pl.DataFrame(
-            grid,
-            schema=self.samples.select(self.param_names).schema,
-            orient="row",
-        )
+    def get_grid(self, steps: int):
+        return util.get_grid(steps, self._param_range, self._param_types)
 
     def get_random_samples(
         self,
@@ -319,8 +289,29 @@ class CoolSearch:
 
         return marginals
 
-    def model_poly():
-        """Polynomial model of function"""
+    def model_poly(self, degree: int = 1):
+        """Polynomial model of function.
+
+        ## parameters
+        - degree (int): maximum degree of polynomial
+
+        ## returns
+        - model_poly (PolynomialModel): model fitted to known samples.
+
+        """
+
+        if len(self.samples) < degree + 1:
+            raise ValueError(
+                f"Needs more samples: {len(self.samples)}<{degree} + 1")
+
+        model_poly = PolynomialModel(
+            self.samples,
+            self.param_names,
+            degree,
+            interaction=True,
+            target="score",
+        )
+        return model_poly
 
     def model_GP():
         """Gaussian process model of function"""

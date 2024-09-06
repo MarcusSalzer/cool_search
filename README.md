@@ -12,6 +12,7 @@ A package for optimizing black-box functions.
 
 ## Todo
 
+- From classifier
 - Move plotting outside of package!
 - Gaussian process model
 

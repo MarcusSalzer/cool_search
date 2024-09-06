@@ -83,7 +83,8 @@ class search_one_dim:
         self.metric_name = metric
         self.metric = self.METRICS[metric]
         self.samples = pl.DataFrame(
-            schema={param_name: pl.Float64, metric: pl.Float64, "runtime": pl.Float64}
+            schema={param_name: pl.Float64,
+                    metric: pl.Float64, "runtime": pl.Float64}
         )
 
     def objective(self, param_value) -> float:
@@ -91,7 +92,8 @@ class search_one_dim:
 
         t_start = default_timer()
 
-        model = self.estimator(**self.fixed_params, **{self.param_name: param_value})
+        model = self.estimator(**self.fixed_params, **
+                               {self.param_name: param_value})
         model.fit(self.X_train, self.Y_train)
         pred_val = model.predict(self.X_val).reshape(self.Y_val.shape)
         t_fitpredict = default_timer() - t_start
@@ -182,7 +184,8 @@ class search_one_dim:
 
         if predict_resolution:
             return self.score_gp.predict(
-                np.linspace(*self.param_range, predict_resolution).reshape(-1, 1),
+                np.linspace(*self.param_range,
+                            predict_resolution).reshape(-1, 1),
                 return_std=True,
             )
 
@@ -287,10 +290,3 @@ class search_one_dim:
         fig.update_yaxes(title=self.metric_name)
         fig.update_layout(title="Gaussian process model")
         return fig
-
-    def binary_search():
-        pass
-
-    # idea: approx gradient search
-    # idea: genetic search
-    # idea: bayesian search

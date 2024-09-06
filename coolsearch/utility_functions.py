@@ -1,14 +1,14 @@
 """
-Some things we learned.
+Utilities
 """
 
 import math
+from time import sleep
 from typing import Literal
 
 import numpy as np
 import polars as pl
 from plotly import io as pio
-from time import sleep
 
 
 def set_plotly_template():
@@ -20,27 +20,37 @@ def set_plotly_template():
 
 
 def get_grid(
-    steps,
+    steps: int | dict[str, int],
     param_range: dict[str, tuple],
     param_types: dict[str, Literal["float", "int"]],
-):
-    """Get a grid for all parameters.
+) -> pl.DataFrame:
+    """Get a grid for parameters.
 
     ## Parameters
-    - steps (int): Number of steps/points per parameter
+    - steps (int | dict[str, int]): Number of steps/points per parameter
         - Note: integer-parameters might get fewer steps to avoid duplicates.
 
     ## Returns
     - grid (DataFrame): points in parameter space.
     """
 
+    if isinstance(steps, int):
+        steps = dict.fromkeys(param_range.keys(), steps)
+
+    # validate step counts
+
+    for param, s in steps.items():
+        if s < 2:
+            print(
+                f"WARNING: {s} < 2 steps for {param}, gives only minimum value")
+
     grid_points = []
     for param, r in param_range.items():
         param_type = param_types[param]
         if param_type == "int":
-            grid = np.unique(np.linspace(r[0], r[1], steps, dtype=int))
+            grid = np.unique(np.linspace(r[0], r[1], steps[param], dtype=int))
         elif param_type == "float":
-            grid = np.linspace(r[0], r[1], steps, dtype=float)
+            grid = np.linspace(r[0], r[1], steps[param], dtype=float)
         else:
             raise ValueError(f"Unsupported parameter type ({param_type})")
 

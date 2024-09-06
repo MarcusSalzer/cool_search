@@ -63,7 +63,7 @@ class CoolSearch:
 
         # schema for parameters, score and runtime
         schema = {
-            param: (pl.Float32 if dtype == "float" else pl.Int32)
+            param: (pl.Float64 if dtype == "float" else pl.Int64)
             for param, dtype in param_types.items()
         }
         schema["score"] = pl.Float64
@@ -108,7 +108,7 @@ class CoolSearch:
     def from_classifier():
         pass  # ??
 
-    def get_grid(self, steps: int):
+    def get_grid(self, steps: int | dict[str, int]):
         return util.get_grid(steps, self._param_range, self._param_types)
 
     def get_random_samples(
@@ -131,13 +131,11 @@ class CoolSearch:
 
             grid.append(param_values)
 
-        # TODO: only keep unique
-
         return pl.DataFrame(
             grid,
             schema=self.samples.select(self.param_names).schema,
             orient="row",
-        )
+        ).unique()
 
     def make_factor_grid(self, steps):
         mesh = np.meshgrid(*[np.linspace(0, 1, steps)] * self._ndim)
@@ -145,8 +143,7 @@ class CoolSearch:
 
     def grid_search(
         self,
-        steps=10,  # TODO: allow dict of steps per param!
-        # TODO: Specify dimensions to grid, and strategy for others? (include in above dict)
+        steps: int | dict[str, int] = 10,
         target_runtime=None,
         verbose: Literal[0, 1, 2] = 2,
         etr_update_step: int = 1,
@@ -154,7 +151,9 @@ class CoolSearch:
         """Sample objective on an evenly spaced grid.
 
         ## Parameters
-        - steps (TODO)
+        - steps (int | dict[str, int]): grid resolution, either:
+            - same for all parameters (int)
+            - specify per parameter (dict). 
         - target_runtime (float): target time (seconds) to estimate number of steps.
         - verbose (int): amount of status information printed
             - 0: no prints
@@ -175,6 +174,7 @@ class CoolSearch:
                 if verbose >= 1:
                     print("No previous samples. Running 1 initial evaluation")
                 self.grid_search(steps=1, verbose=0)
+
             # choose steps to approximately run for ´target_runtime´ seconds
             n_samples = target_runtime / self.samples["runtime"].mean()
             steps = max(int(round(n_samples ** (1 / self._ndim))), 1)
@@ -206,6 +206,9 @@ class CoolSearch:
             if not self.samples.is_empty():
                 est_runtime = len(grid_new) * self.samples["runtime"].mean()
                 print(f"Estimated runtime: {est_runtime:.4f} s.")
+
+        # The following might be more parallelizable?
+        # problem computing eta for paralell? not really?
 
         # grid_new = grid_new.with_columns(
         #     pl.struct(param_names)
@@ -315,3 +318,7 @@ class CoolSearch:
 
     def model_GP():
         """Gaussian process model of function"""
+
+    # idea: approx gradient search
+    # idea: genetic search
+    # idea: bayesian search

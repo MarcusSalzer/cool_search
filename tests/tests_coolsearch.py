@@ -68,7 +68,7 @@ class TestCoolSearch2Dint(unittest.TestCase):
             },
         )
 
-    def test_random_unique(self):
+    def test_random_samples(self):
         grid = self.search.get_random_samples(100)
 
         ok_types = {pl.Int32, pl.Int64}
@@ -77,6 +77,7 @@ class TestCoolSearch2Dint(unittest.TestCase):
             [True, True],
             "incorrect datatypes",
         )
+        self.assertLessEqual(len(grid), 9, "too many points")
 
 
 class TestCoolSearch3D(unittest.TestCase):
@@ -94,7 +95,7 @@ class TestCoolSearch3D(unittest.TestCase):
             },
         )
 
-    def test_random_grid(self):
+    def test_random_samples(self):
         grid = self.search.get_random_samples(50)
         self.assertEqual(grid.columns, ["x", "y", "z"], "wrong columns")
         self.assertEqual(len(grid), 50, "wrong length")
@@ -103,6 +104,11 @@ class TestCoolSearch3D(unittest.TestCase):
         grid = self.search.get_grid(4)
         self.assertEqual(grid.columns, ["x", "y", "z"], "wrong columns")
         self.assertEqual(len(grid), 4**3, "wrong length")
+
+    def test_dict_step_grid(self):
+        grid = self.search.get_grid({"x": 7, "y": 4, "z": 3})
+        self.assertEqual(grid.columns, ["x", "y", "z"], "wrong columns")
+        self.assertEqual(len(grid), 7 * 4 * 3, "wrong length")
 
 
 class TestPolymodel(unittest.TestCase):

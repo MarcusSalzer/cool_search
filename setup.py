@@ -7,5 +7,5 @@ setup(
     author='marcu',
     packages=['coolsearch'],  # same as name
     # external packages as dependencies
-    install_requires=['numpy', 'polars', 'plotly'],
+    install_requires=['numpy', 'polars'],
 )

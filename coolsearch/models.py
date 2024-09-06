@@ -9,7 +9,15 @@ import coolsearch.utility_functions as util
 class PolynomialModel:
     """Polynomial regression"""
 
-    # TODO slots
+    __slots__ = [
+        "beta",
+        "degree",
+        "features",
+        "param_range",
+        "residuals",
+        "X_poly",
+        "y",
+    ]
 
     def __init__(
         self,
@@ -107,9 +115,7 @@ class PolynomialModel:
         # add predictions
         high_res = high_res.with_columns(value=self.predict(samples=high_res))
 
-        minimum = high_res.filter(
-            pl.col("value") == pl.col("value").min()
-        )
+        minimum = high_res.filter(pl.col("value") == pl.col("value").min())
         return minimum, high_res
 
 

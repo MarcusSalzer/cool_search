@@ -1,5 +1,5 @@
 from timeit import default_timer
-from typing import Literal
+from typing import Callable, Literal
 
 import numpy as np
 import polars as pl
@@ -105,8 +105,61 @@ class CoolSearch:
     #     )
 
     @classmethod
-    def from_classifier():
-        pass  # ??
+    def model_validate(
+        cls,
+        model,
+        param_range: dict[str, tuple],
+        param_types: dict[str, Literal["float", "int"]] | None,
+        data: tuple,
+        loss_fn: Callable[[np.ndarray, np.ndarray], float],
+        invert: bool = False,
+        fixed_params={},
+    ):
+        """
+        Create a `CoolSearch` for tuning a classifier/regressor.
+
+        ## parameters
+        - model: A classifier/regressor that implements
+            - set_params()
+            - fit()
+            - predict()
+        - param_range (dict[str, tuple]): ranges for parameters to tune
+        - param_types (dict[str, str]): types for parameters to tune
+        - data (tuple): data for training and validation
+            - X_train, X_val, Y_train, Y_val
+        - loss_fn (Callable[[arraylike, arraylike], float]): loss function to minimize
+        - invert (bool): maximize loss function instead
+
+        ## returns
+        - search (CoolSearch)
+        """
+
+        if len(data) == 4:
+            X_train, X_val, Y_train, Y_val = data
+
+            if X_train.shape[1] != X_val.shape[1]:
+                raise ValueError("inconsistent column count (X)")
+            if X_train.shape[0] != Y_train.shape[0]:
+                raise ValueError("inconsistent row count (train)")
+            if X_val.shape[0] != Y_val.shape[0]:
+                raise ValueError("inconsistent row count (val)")
+
+        else:
+            raise ValueError(
+                f"Unsupported number of data arrays ({len(data)})")
+
+        def objective(**kwargs):
+            model.set_params(**kwargs, **fixed_params)
+            model.fit(X_train, Y_train)
+
+            pred_val = model.predict(X_val)
+
+            if invert:
+                return -loss_fn(Y_val, pred_val)
+            else:
+                return loss_fn(Y_val, pred_val)
+
+        return cls(objective, param_range, param_types, fixed_params)
 
     def get_grid(self, steps: int | dict[str, int]):
         return util.get_grid(steps, self._param_range, self._param_types)
@@ -143,7 +196,7 @@ class CoolSearch:
 
     def grid_search(
         self,
-        steps: int | dict[str, int] = 10,
+        steps: int | dict[str, int] | None = 10,
         target_runtime=None,
         verbose: Literal[0, 1, 2] = 2,
         etr_update_step: int = 1,
@@ -153,7 +206,7 @@ class CoolSearch:
         ## Parameters
         - steps (int | dict[str, int]): grid resolution, either:
             - same for all parameters (int)
-            - specify per parameter (dict). 
+            - specify per parameter (dict).
         - target_runtime (float): target time (seconds) to estimate number of steps.
         - verbose (int): amount of status information printed
             - 0: no prints
@@ -173,7 +226,7 @@ class CoolSearch:
             if self.samples.is_empty():
                 if verbose >= 1:
                     print("No previous samples. Running 1 initial evaluation")
-                self.grid_search(steps=1, verbose=0)
+                self.grid_search(steps=1, verbose=0)  # TODO "POINTSEARCH?"
 
             # choose steps to approximately run for ´target_runtime´ seconds
             n_samples = target_runtime / self.samples["runtime"].mean()
@@ -187,64 +240,8 @@ class CoolSearch:
                         ]
                     )
                 )
-
-        t_start = default_timer()
-
-        param_names = self.param_names
-
         grid = self.get_grid(steps)
-
-        # avoid previously sampled points
-        grid_new = grid.join(
-            self.samples.select(param_names),
-            on=param_names,
-            how="anti",
-        )
-
-        if verbose >= 1:
-            print(f"Searching {len(grid_new)} new parameter points")
-            if not self.samples.is_empty():
-                est_runtime = len(grid_new) * self.samples["runtime"].mean()
-                print(f"Estimated runtime: {est_runtime:.4f} s.")
-
-        # The following might be more parallelizable?
-        # problem computing eta for paralell? not really?
-
-        # grid_new = grid_new.with_columns(
-        #     pl.struct(param_names)
-        #     .map_elements(lambda row: self.objective(**row), return_dtype=self.dtype)
-        #     .alias("score")
-        # )
-
-        scores_new = []
-        runtimes_new = []
-        for row in grid_new.iter_rows(named=True):
-            t_run = default_timer()
-            scores_new.append(self._objective(**row, **self._fixed_params))
-            runtimes_new.append(default_timer() - t_run)
-
-            if verbose >= 2 and ((len(runtimes_new) - 1) % etr_update_step == 0):
-                # est time remaining based on old and new samples
-                total_runtime = self.samples["runtime"].sum(
-                ) + sum(runtimes_new)
-                mean_runtime = total_runtime / \
-                    (len(self.samples) + len(runtimes_new))
-                etr = (len(grid_new) - len(runtimes_new)) * mean_runtime
-                print(f"Estimated time remaining: {etr:.1f}...", end="\r")
-
-        grid_new = grid_new.with_columns(
-            score=pl.Series(scores_new),
-            runtime=pl.Series(runtimes_new),
-        )
-        self.samples = pl.concat([self.samples, grid_new])
-
-        runtime_sum = sum(runtimes_new)
-        t_overhead = default_timer() - t_start - runtime_sum
-        if verbose >= 1:
-            print(
-                f"Total runtime: {runtime_sum:.4f} s + overhead: {t_overhead:.4f} s.")
-
-        return grid_new
+        return self._eval_samples(grid, verbose, etr_update_step)
 
     def random_search(
         self,
@@ -252,19 +249,15 @@ class CoolSearch:
         target_runtime=None,  # TODO make a function for est this
         seed=None,
         verbose: Literal[0, 1, 2] = 1,
+        etr_update_step: int = 1
     ):
         """Sample objective at N randomly chosen points."""
-        # TODO remove this? have parametr on gridserach`?`
-        rng = np.random.default_rng(seed)
 
-        # TODO: fix proper random samples.
-        samples = rng.uniform(0, 1, (N, self._ndim))
-        if verbose >= 1:
-            # print(f"searching {len(grid_new)} new parameter points")
-            if not self.samples.is_empty():
-                pass
-                # est_runtime = len(grid_new) * self.samples["runtime"].mean()
-                # print(f"estimated runtime: {est_runtime:.4f} s.")
+        if target_runtime is not None:
+            raise NotImplementedError("coming soon")
+
+        grid = self.get_random_samples(N, seed)
+        return self._eval_samples(grid, verbose, etr_update_step)
 
     def run_sequence():
         """Specify a 'macro-program' to run multiple searches."""
@@ -319,6 +312,57 @@ class CoolSearch:
     def model_GP():
         """Gaussian process model of function"""
 
-    # idea: approx gradient search
-    # idea: genetic search
-    # idea: bayesian search
+    def _eval_samples(self, grid_new, verbose, etr_update_step) -> pl.DataFrame:
+        """Evaluate a grid of samples"""
+
+        t_start = default_timer()
+
+        # avoid previously sampled points
+        grid_new = grid_new.join(
+            self.samples.select(self.param_names),
+            on=self.param_names,
+            how="anti",
+        )
+
+        if verbose >= 1:
+            print(f"Searching {len(grid_new)} new parameter points")
+            if not self.samples.is_empty():
+                est_runtime = len(grid_new) * self.samples["runtime"].mean()
+                print(f"Estimated runtime: {est_runtime:.4f} s.")
+
+        # The following might be more parallelizable?
+        # problem computing eta for paralell? not really?
+
+        # grid_new = grid_new.with_columns(
+        #     pl.struct(param_names)
+        #     .map_elements(lambda row: self.objective(**row), return_dtype=self.dtype)
+        #     .alias("score")
+        # )
+
+        scores_new = []
+        rt_new = []
+        for row in grid_new.iter_rows(named=True):
+            t_run = default_timer()
+            scores_new.append(self._objective(**row, **self._fixed_params))
+            rt_new.append(default_timer() - t_run)
+
+            if verbose >= 2 and ((len(rt_new) - 1) % etr_update_step == 0):
+                # est time remaining based on old and new samples
+                total_rt = self.samples["runtime"].sum() + sum(rt_new)
+                mean_rt = total_rt / (len(self.samples) + len(rt_new))
+                etr = (len(grid_new) - len(rt_new)) * mean_rt
+                print(f"Estimated time remaining: {etr:0f}...", end="\r")
+
+        grid_new = grid_new.with_columns(
+            score=pl.Series(scores_new),
+            runtime=pl.Series(rt_new),
+        )
+        self.samples = pl.concat([self.samples, grid_new])
+
+        runtime_sum = sum(rt_new)
+        t_overhead = default_timer() - t_start - runtime_sum
+        if verbose >= 1:
+            print(
+                f"Total runtime: {runtime_sum:.4f} s + overhead: {t_overhead:.4f} s.")
+
+        return grid_new

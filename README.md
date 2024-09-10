@@ -5,7 +5,9 @@ A package for optimizing black-box functions.
 
 ## Features
 
-- Gridsearch, saving previous samples
+- Gridsearch
+- Random search
+- Saving previous samples
 - Runtime estimation
 - Polynomial regression model
 
@@ -15,6 +17,11 @@ A package for optimizing black-box functions.
 - From classifier
 - Move plotting outside of package!
 - Gaussian process model
+- parallelization
+
+### ideas 
+- genetic search
+
 
 ## note
 

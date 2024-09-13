@@ -4,8 +4,8 @@ from typing import Callable, Literal
 import numpy as np
 import polars as pl
 
-from coolsearch.models import PolynomialModel
 import coolsearch.utility_functions as util
+from coolsearch.models import PolynomialModel
 
 
 class CoolSearch:
@@ -145,8 +145,7 @@ class CoolSearch:
                 raise ValueError("inconsistent row count (val)")
 
         else:
-            raise ValueError(
-                f"Unsupported number of data arrays ({len(data)})")
+            raise ValueError(f"Unsupported number of data arrays ({len(data)})")
 
         def objective(**kwargs):
             model.set_params(**kwargs, **fixed_params)
@@ -249,7 +248,7 @@ class CoolSearch:
         target_runtime=None,  # TODO make a function for est this
         seed=None,
         verbose: Literal[0, 1, 2] = 1,
-        etr_update_step: int = 1
+        etr_update_step: int = 1,
     ):
         """Sample objective at N randomly chosen points."""
 
@@ -285,7 +284,7 @@ class CoolSearch:
 
         return marginals
 
-    def model_poly(self, degree: int = 1):
+    def model_poly(self, degree: int = 1, verbose=True):
         """Polynomial model of function.
 
         ## parameters
@@ -297,17 +296,17 @@ class CoolSearch:
         """
 
         if len(self.samples) < degree + 1:
-            raise ValueError(
-                f"Needs more samples: {len(self.samples)}<{degree} + 1")
+            raise ValueError(f"Needs more samples: {len(self.samples)}<{degree} + 1")
 
-        model_poly = PolynomialModel(
+        model = PolynomialModel(
             self.samples,
             self.param_names,
             degree,
             interaction=True,
             target="score",
         )
-        return model_poly
+        model.fit(verbose)
+        return model
 
     def model_GP():
         """Gaussian process model of function"""
@@ -362,7 +361,6 @@ class CoolSearch:
         runtime_sum = sum(rt_new)
         t_overhead = default_timer() - t_start - runtime_sum
         if verbose >= 1:
-            print(
-                f"Total runtime: {runtime_sum:.4f} s + overhead: {t_overhead:.4f} s.")
+            print(f"Total runtime: {runtime_sum:.4f} s + overhead: {t_overhead:.4f} s.")
 
         return grid_new

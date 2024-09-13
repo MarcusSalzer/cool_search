@@ -18,8 +18,7 @@ class TestPolyModel1D(unittest.TestCase):
         self.f = lambda x: util.test_function_01(x, 0.001)
         self.samples = pl.DataFrame({"x": np.linspace(-10, 10, 5)})
         self.samples = self.samples.with_columns(
-            pl.col("x").map_elements(
-                self.f, return_dtype=pl.Float64).alias("f"),
+            pl.col("x").map_elements(self.f, return_dtype=pl.Float64).alias("f"),
         )
 
     def test_degree2(self):
@@ -30,7 +29,7 @@ class TestPolyModel1D(unittest.TestCase):
         model.fit(verbose=False)
         beta = model.beta
 
-        f_pred = model.predict()
+        f_pred = model.yhat
         f_poly = model.polynomial(self.samples["x"].to_numpy())
 
         self.assertEqual(2 + 1, len(beta), "Incorrect number of coefs.")
@@ -42,12 +41,11 @@ class TestPolyModel1D(unittest.TestCase):
         )
 
     def test_exact_degree(self):
-        model = PolynomialModel(
-            self.samples, ["x"], len(self.samples) - 1, target="f")
+        model = PolynomialModel(self.samples, ["x"], len(self.samples) - 1, target="f")
         model.fit(verbose=False)
 
         f_true = self.samples["f"].to_numpy()
-        f_pred = model.predict()
+        f_pred = model.yhat
         f_poly = model.polynomial(self.samples["x"].to_numpy())
 
         self.assertListEqual(

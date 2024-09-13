@@ -89,20 +89,23 @@ class PolynomialModel:
 
         return np.polynomial.Polynomial(self.beta)
 
+    @property
+    def yhat(self):
+        """Prediction of training data"""
+
+        return self.X_poly @ self.beta
+
     def predict(
         self,
-        samples: pl.DataFrame | None = None,
+        samples: pl.DataFrame,
     ):
-        """Predict new samples, or samples used for fit if omitted."""
-        if samples is None:
-            X_poly = self.X_poly
-        else:
-            X = samples.select(self.features).to_numpy()
-            X_poly = polynomial_features(X, self.degree)
+        """Predict new samples."""
+        X = samples.select(self.features).to_numpy()
+        X_poly = polynomial_features(X, self.degree)
 
         y_pred = X_poly @ self.beta
 
-        return y_pred
+        return samples.with_columns(y_pred=y_pred)
 
     def minimum_numeric(self, steps=10):
         """Evaluate polynomial on a (float type) grid, and find minimum"""

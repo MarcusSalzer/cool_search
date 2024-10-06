@@ -1,5 +1,10 @@
 """
 Utilities
+
+- grid
+- monomial
+- a test function
+- a feature scaler
 """
 
 import math
@@ -8,15 +13,6 @@ from typing import Literal
 
 import numpy as np
 import polars as pl
-from plotly import io as pio
-
-
-def set_plotly_template():
-    plot_temp = pio.templates["plotly_dark"]
-    plot_temp.layout.width = 400
-    plot_temp.layout.height = 300
-    plot_temp.layout.autosize = False
-    pio.templates.default = plot_temp
 
 
 def get_grid(
@@ -41,8 +37,7 @@ def get_grid(
 
     for param, s in steps.items():
         if s < 2:
-            print(
-                f"WARNING: {s} < 2 steps for {param}, gives only minimum value")
+            print(f"WARNING: {s} < 2 steps for {param}, gives only minimum value")
 
     grid_points = []
     for param, r in param_range.items():
@@ -78,8 +73,7 @@ def monomials(N, d):
     """
     print(f"should be {math.comb(N + d, d)} terms:")
 
-    combinations = np.stack([x.ravel()
-                            for x in np.meshgrid(*[range(d + 1)] * N)]).T
+    combinations = np.stack([x.ravel() for x in np.meshgrid(*[range(d + 1)] * N)]).T
 
     assert N <= 4, "can only visualize up to 4 vars"
 

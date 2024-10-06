@@ -263,8 +263,8 @@ class CoolSearch:
         # idea. run sequentially, /and parallel?
         # allow for conditions to choose next step
 
-    def marginals(self):
-        """Aggregate over unique parameter values each parameter.
+    def marginals(self) -> dict[str, pl.DataFrame]:
+        """Aggregate score values over unique parameter values.
 
         ## Returns
         - marginals (dict[str,DataFrame]): aggregated scores for each parameter.

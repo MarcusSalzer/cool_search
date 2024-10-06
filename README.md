@@ -1,6 +1,7 @@
 # CoolSearch ❄️
 
-A package for optimizing black-box functions. 
+A package for optimizing black-box functions.
+
 - Work in progress
 
 ## Features
@@ -11,17 +12,15 @@ A package for optimizing black-box functions.
 - Runtime estimation
 - Polynomial regression model
 
-
 ## Todo
 
-- From classifier
 - Move plotting outside of package!
 - Gaussian process model
 - parallelization
 
-### ideas 
-- genetic search
+### ideas
 
+- genetic search
 
 ## note
 

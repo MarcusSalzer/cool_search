@@ -121,6 +121,30 @@ class PolynomialModel:
         minimum = high_res.filter(pl.col("value") == pl.col("value").min())
         return minimum, high_res
 
+    def poly_marginals(self, steps=10):
+        """TODO"""
+        polyval = self.predict(
+            util.get_grid(
+                100,
+                self.param_range,
+                dict.fromkeys(self.features, "float"),
+            )
+        )
+
+        marginals = {}
+        for k in self.features:
+            marginals[k] = (
+                polyval.group_by(k)
+                .agg(
+                    pl.col("y_pred").mean().alias("mean"),
+                    pl.col("y_pred").std().alias("std"),
+                    pl.col("y_pred").median().alias("median"),
+                )
+                .sort(k)
+            )
+
+        return marginals
+
 
 def polynomial_features(X: np.ndarray, d: int, verbose=True):
     """Create polynomial features of terms up to a degree (including constant).

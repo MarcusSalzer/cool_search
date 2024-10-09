@@ -327,7 +327,7 @@ class CoolSearch:
             print(f"Searching {len(grid_new)} new parameter points")
             if not self.samples.is_empty():
                 est_runtime = len(grid_new) * self.samples["runtime"].mean()
-                print(f"Estimated runtime: {est_runtime:.4f} s.")
+                print(f"Estimated runtime: {est_runtime:.2f} s.")
 
         # The following might be more parallelizable?
         # problem computing eta for paralell? not really?
@@ -350,7 +350,7 @@ class CoolSearch:
                 total_rt = self.samples["runtime"].sum() + sum(rt_new)
                 mean_rt = total_rt / (len(self.samples) + len(rt_new))
                 etr = (len(grid_new) - len(rt_new)) * mean_rt
-                print(f"Estimated time remaining: {etr:0f}...", end="\r")
+                print(f"Estimated time remaining: {etr:.1f}...", end="\r")
 
         grid_new = grid_new.with_columns(
             score=pl.Series(scores_new),

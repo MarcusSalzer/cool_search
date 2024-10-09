@@ -1,6 +1,7 @@
 """Plotting functions that might be useful. Based on plotly"""
 
 from plotly import io as pio
+from polars import DataFrame
 
 
 def set_plotly_template():
@@ -9,3 +10,7 @@ def set_plotly_template():
     plot_temp.layout.height = 300
     plot_temp.layout.autosize = False
     pio.templates.default = plot_temp
+
+
+def marginal_plot(marginal: DataFrame):
+    pass

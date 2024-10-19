@@ -1,3 +1,4 @@
+import os
 from timeit import default_timer
 from typing import Callable, Literal
 
@@ -311,10 +312,23 @@ class CoolSearch:
     def model_GP():
         """Gaussian process model of function"""
 
-    def _eval_samples(self, grid_new, verbose, etr_update_step) -> pl.DataFrame:
+    def _eval_samples(
+        self,
+        grid_new,
+        verbose,
+        etr_update_step,
+        n_threads: int | None = None,
+    ) -> pl.DataFrame:
         """Evaluate a grid of samples"""
 
+        # measure total runtime to compute overhead
         t_start = default_timer()
+
+        # full multithread if not specified
+        if not n_threads:
+            n_threads = os.cpu_count()
+        if not n_threads:
+            n_threads = 1
 
         # avoid previously sampled points
         grid_new = grid_new.join(
@@ -325,21 +339,19 @@ class CoolSearch:
 
         if verbose >= 1:
             print(f"Searching {len(grid_new)} new parameter points")
+            if n_threads > 1:
+                print(f"Starting {n_threads} threads")
             if not self.samples.is_empty():
                 est_runtime = len(grid_new) * self.samples["runtime"].mean()
                 print(f"Estimated runtime: {est_runtime:.2f} s.")
 
-        # The following might be more parallelizable?
-        # problem computing eta for paralell? not really?
+        # TODO
+        # setup test function (single tuple/dict param?)
+        #  - return value and runtimes
+        # pool
 
-        # grid_new = grid_new.with_columns(
-        #     pl.struct(param_names)
-        #     .map_elements(lambda row: self.objective(**row), return_dtype=self.dtype)
-        #     .alias("score")
-        # )
-
-        scores_new = []
-        rt_new = []
+        scores_new = []  # scores for these new runs
+        rt_new = []  # runtimes for these new runs
         for row in grid_new.iter_rows(named=True):
             t_run = default_timer()
             scores_new.append(self._objective(**row, **self._fixed_params))

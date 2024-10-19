@@ -103,6 +103,35 @@ def test_function_01(x, delay=0):
     return np.sqrt((x - 2) ** 2 + 1) + np.sin(x / 2)
 
 
+def rastrigin_slow(x, y, iterations=10**7) -> float:
+    """A function with the minimum at (0,0).
+
+    ## parameters
+    - x, y (float): for evaluating function
+    - iterations (int): Create artificial slowdown.
+        - 10**7 gives ca 3.7 seconds
+
+    """
+
+    # Artificial slowness loop
+    total = 0
+    for _ in range(iterations):
+        total += (x**2 - 10 * math.cos(2 * math.pi * x)) + (
+            y**2 - 10 * math.cos(2 * math.pi * y)
+        )
+        total -= math.sqrt(x**2 + y**2)
+
+        # some useless trigonometry
+        total = math.sin(total) ** 2 + math.cos(total) ** 2
+
+    # The actual Rastrigin calculation, which is the target function
+    result = (
+        20 + x**2 + y**2 - 10 * (math.cos(2 * math.pi * x) + math.cos(2 * math.pi * y))
+    )
+
+    return result
+
+
 class Scaler:
     def __init__(self, axis=0) -> None:
         self.axis = axis

@@ -4,12 +4,11 @@ from coolsearch.utility_functions import rastrigin_slow
 from timeit import default_timer
 import numpy as np
 
-# cpu_count = multiprocessing.cpu_count()
-cpu_count = os.cpu_count()
-print(f"You seem to have {cpu_count} cpu cores")
 
 ITERATIONS = 10**5
-NTHREADS = 7
+n_processes = 8
+N = 100
+etr_update_step = 10
 
 
 def test_1d(x):
@@ -25,24 +24,29 @@ def test_2d(param):
     return value, rt
 
 
-xx = np.linspace(-10, 10, 60)
-yy = np.linspace(-1, 3, 60)
+if __name__ == "__main__":
+    cpu_count = os.cpu_count()
+    print(f"You seem to have {cpu_count} cpu cores")
 
-params = list(zip(xx, yy))
-print("computing with starmap")
-ts = default_timer()
-with pool.Pool(NTHREADS) as p:
-    results = p.map(test_2d, params)
+    xx = np.linspace(-10, 10, N)
+    yy = np.linspace(-1, 3, N)
 
-print(f"time taken: {default_timer()-ts}\n\n")
-# print(results)
+    params = list(zip(xx, yy))
+    print("computing with starmap")
+    ts = default_timer()
+    with pool.Pool(n_processes) as p:
+        results = p.map(test_2d, params)
 
-print("computing with imap_unordered")
-ts = default_timer()
+    print(f"time taken: {default_timer()-ts}\n\n")
+    # print(results)
 
-with pool.Pool(NTHREADS) as p:
-    results = []
-    for i, res in enumerate(p.imap_unordered(test_2d, params)):
-        results.append(res)
-        print(f"completed {len(results)}/{len(params)}")
-print(f"time taken: {default_timer()-ts}\n\n")
+    print("computing with imap_unordered")
+    ts = default_timer()
+
+    with pool.Pool(n_processes) as p:
+        results = []
+        for i, res in enumerate(p.imap_unordered(test_2d, params)):
+            results.append(res)
+            if i % etr_update_step == 0:
+                print(f"completed {len(results)}/{len(params)}")
+    print(f"time taken: {default_timer()-ts}\n\n")

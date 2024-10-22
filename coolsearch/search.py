@@ -1,3 +1,5 @@
+import inspect
+from multiprocessing import pool
 import os
 from timeit import default_timer
 from typing import Callable, Literal
@@ -39,6 +41,8 @@ class CoolSearch:
         - fixed_params (dict): fixed kwargs provided to `objective`.
 
         """
+        # if not self._accepts_kwargs(objective):
+        #     raise TypeError("Objective function must accept **kwargs.")
 
         # set constants
         self._objective = objective
@@ -314,10 +318,10 @@ class CoolSearch:
 
     def _eval_samples(
         self,
-        grid_new,
-        verbose,
-        etr_update_step,
-        n_threads: int | None = None,
+        grid_new: pl.DataFrame,
+        verbose: int,
+        etr_update_step: int,
+        n_processes: int | None = None,
     ) -> pl.DataFrame:
         """Evaluate a grid of samples"""
 
@@ -325,10 +329,10 @@ class CoolSearch:
         t_start = default_timer()
 
         # full multithread if not specified
-        if not n_threads:
-            n_threads = os.cpu_count()
-        if not n_threads:
-            n_threads = 1
+        if not n_processes:
+            n_processes = os.cpu_count()
+        if not n_processes:
+            n_processes = 1
 
         # avoid previously sampled points
         grid_new = grid_new.join(
@@ -339,10 +343,11 @@ class CoolSearch:
 
         if verbose >= 1:
             print(f"Searching {len(grid_new)} new parameter points")
-            if n_threads > 1:
-                print(f"Starting {n_threads} threads")
+            print(f" -Starting {n_processes} processes")
             if not self.samples.is_empty():
-                est_runtime = len(grid_new) * self.samples["runtime"].mean()
+                est_runtime = (
+                    len(grid_new) * self.samples["runtime"].mean() / n_processes
+                )
                 print(f"Estimated runtime: {est_runtime:.2f} s.")
 
         # TODO
@@ -350,29 +355,69 @@ class CoolSearch:
         #  - return value and runtimes
         # pool
 
-        scores_new = []  # scores for these new runs
-        rt_new = []  # runtimes for these new runs
-        for row in grid_new.iter_rows(named=True):
-            t_run = default_timer()
-            scores_new.append(self._objective(**row, **self._fixed_params))
-            rt_new.append(default_timer() - t_run)
+        with pool.Pool(n_processes) as p:
+            scores_new = []
+            runtimes_new = []
+            with pool.Pool(n_processes) as p:
+                # Create pairs of (objective function, params) for each item in self.data
+                args_for_pool = [
+                    (self._objective, param_dict)
+                    for param_dict in grid_new.iter_rows(named=True)
+                ]
+                for i, (res, rt) in enumerate(
+                    p.imap_unordered(
+                        eval_objective,
+                        args_for_pool,
+                    )
+                ):
+                    if (i - 1) % etr_update_step == 0:
+                        print(f"completed {i}/{len(grid_new)} points")
+                    scores_new.append(res)
+                    runtimes_new.append(rt)
 
-            if verbose >= 2 and ((len(rt_new) - 1) % etr_update_step == 0):
-                # est time remaining based on old and new samples
-                total_rt = self.samples["runtime"].sum() + sum(rt_new)
-                mean_rt = total_rt / (len(self.samples) + len(rt_new))
-                etr = (len(grid_new) - len(rt_new)) * mean_rt
-                print(f"Estimated time remaining: {etr:.1f}...", end="\r")
+        # for row in grid_new.iter_rows(named=True):
+        #     t_run = default_timer()
+        #     scores_new.append(self._objective(**row, **self._fixed_params))
+        #     rt_new.append(default_timer() - t_run)
+
+        #     if verbose >= 2 and ((len(rt_new) - 1) % etr_update_step == 0):
+        #         # est time remaining based on old and new samples
+        #         total_rt = self.samples["runtime"].sum() + sum(rt_new)
+        #         mean_rt = total_rt / (len(self.samples) + len(rt_new))
+        #         etr = (len(grid_new) - len(rt_new)) * mean_rt
+        #         print(f"Estimated time remaining: {etr:.1f}...", end="\r")
 
         grid_new = grid_new.with_columns(
             score=pl.Series(scores_new),
-            runtime=pl.Series(rt_new),
+            runtime=pl.Series(runtimes_new),
         )
         self.samples = pl.concat([self.samples, grid_new])
 
-        runtime_sum = sum(rt_new)
-        t_overhead = default_timer() - t_start - runtime_sum
+        runtime_sum = sum(runtimes_new)
+        t_total = default_timer() - t_start
         if verbose >= 1:
-            print(f"Total runtime: {runtime_sum:.4f} s + overhead: {t_overhead:.4f} s.")
+            # print(f"Total runtime: {runtime_sum:.4f} s + overhead: {t_overhead:.4f} s.")
+            print(f"Sum of runtime: {runtime_sum:.2f}. Elapsed time {t_total:.2f} s.")
 
         return grid_new
+
+    def _accepts_kwargs(self, func):
+        """Helper to check if function accepts **kwargs."""
+        sig = inspect.signature(func)
+        for param in sig.parameters.values():
+            if param.kind == param.VAR_KEYWORD:  # This means **kwargs is present
+                return True
+        return False
+
+
+def eval_objective(objective_and_params: tuple[Callable, dict]):
+    """Compute the objective function for a parameter point
+    ## parameters
+    - objective_and_params (tuple): both things
+    ## returns
+    - objective value
+    - runtime (float): runtime in seconds
+    """
+    ts = default_timer()
+    objective, params = objective_and_params
+    return objective(**params), default_timer() - ts

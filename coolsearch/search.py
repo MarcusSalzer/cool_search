@@ -1,14 +1,17 @@
-import inspect
-from multiprocessing import pool
-import os
 from timeit import default_timer
 from typing import Callable, Literal
 
 import numpy as np
 import polars as pl
+from tqdm import tqdm
 
 import coolsearch.utility_functions as util
 from coolsearch.models import PolynomialModel
+
+try:
+    import joblib
+except ImportError:
+    joblib = None
 
 
 class CoolSearch:
@@ -22,6 +25,7 @@ class CoolSearch:
         "_param_range",
         "_param_types",
         "samples",
+        "njobs",
     ]
 
     def __init__(
@@ -31,6 +35,7 @@ class CoolSearch:
         param_types: dict[str, Literal["int", "float"]] | None = None,
         # min_delta? max_steps?
         fixed_params={},
+        n_jobs=-1,
     ) -> None:
         """Tools for minimizing a function.
 
@@ -39,10 +44,9 @@ class CoolSearch:
         - param_range (dict): ranges for all parameters
         - param_types (dict): specify int or float types. (Defaults to float for all parameters)
         - fixed_params (dict): fixed kwargs provided to `objective`.
+        - n_jobs (int): number of parallel jobs. Default: -1 uses cpu_count.
 
         """
-        # if not self._accepts_kwargs(objective):
-        #     raise TypeError("Objective function must accept **kwargs.")
 
         # set constants
         self._objective = objective
@@ -65,6 +69,20 @@ class CoolSearch:
 
         self._param_types = param_types
         self._ndim = len(self._param_range)
+
+        ## handle number of parallel jobs
+        if joblib is None:
+            self.n_jobs = 1
+            print("Note: joblib unavailable, using single-threaded mode.")
+        else:
+            cpu_count = joblib.cpu_count()
+            if n_jobs == -1:
+                self.n_jobs = cpu_count
+            if n_jobs > cpu_count:
+                self.n_jobs = cpu_count
+                print(f"Note: setting n_jobs to cpu_count = {cpu_count}")
+            else:
+                self.n_jobs = n_jobs
 
         # schema for parameters, score and runtime
         schema = {
@@ -321,18 +339,11 @@ class CoolSearch:
         grid_new: pl.DataFrame,
         verbose: int,
         etr_update_step: int,
-        n_processes: int | None = None,
     ) -> pl.DataFrame:
-        """Evaluate a grid of samples"""
+        """Evaluate a grid of samples, append new values and runtimes to self.samples."""
 
         # measure total runtime to compute overhead
         t_start = default_timer()
-
-        # full multithread if not specified
-        if not n_processes:
-            n_processes = os.cpu_count()
-        if not n_processes:
-            n_processes = 1
 
         # avoid previously sampled points
         grid_new = grid_new.join(
@@ -343,81 +354,48 @@ class CoolSearch:
 
         if verbose >= 1:
             print(f"Searching {len(grid_new)} new parameter points")
-            print(f" -Starting {n_processes} processes")
             if not self.samples.is_empty():
                 est_runtime = (
-                    len(grid_new) * self.samples["runtime"].mean() / n_processes
+                    len(grid_new) * self.samples["runtime"].mean() / self.njobs
                 )
                 print(f"Estimated runtime: {est_runtime:.2f} s.")
 
-        # TODO
-        # setup test function (single tuple/dict param?)
-        #  - return value and runtimes
-        # pool
+        param_dicts = grid_new.iter_rows(named=True)
 
-        with pool.Pool(n_processes) as p:
-            scores_new = []
-            runtimes_new = []
-            with pool.Pool(n_processes) as p:
-                # Create pairs of (objective function, params) for each item in self.data
-                args_for_pool = [
-                    (self._objective, param_dict)
-                    for param_dict in grid_new.iter_rows(named=True)
-                ]
-                for i, (res, rt) in enumerate(
-                    p.imap_unordered(
-                        eval_objective,
-                        args_for_pool,
-                    )
-                ):
-                    if (i - 1) % etr_update_step == 0:
-                        print(f"completed {i}/{len(grid_new)} points")
-                    scores_new.append(res)
-                    runtimes_new.append(rt)
+        p = joblib.Parallel(n_jobs=self.njobs)
 
-        # for row in grid_new.iter_rows(named=True):
-        #     t_run = default_timer()
-        #     scores_new.append(self._objective(**row, **self._fixed_params))
-        #     rt_new.append(default_timer() - t_run)
-
-        #     if verbose >= 2 and ((len(rt_new) - 1) % etr_update_step == 0):
-        #         # est time remaining based on old and new samples
-        #         total_rt = self.samples["runtime"].sum() + sum(rt_new)
-        #         mean_rt = total_rt / (len(self.samples) + len(rt_new))
-        #         etr = (len(grid_new) - len(rt_new)) * mean_rt
-        #         print(f"Estimated time remaining: {etr:.1f}...", end="\r")
+        output = p(
+            joblib.delayed(self._eval_obj)(params) for params in tqdm(param_dicts)
+        )
+        values = []
+        runtimes = []
+        for val, rt in output:
+            values.append(val)
+            runtimes.append(rt)
 
         grid_new = grid_new.with_columns(
-            score=pl.Series(scores_new),
-            runtime=pl.Series(runtimes_new),
+            score=pl.Series(values),
+            runtime=pl.Series(runtimes),
         )
         self.samples = pl.concat([self.samples, grid_new])
 
-        runtime_sum = sum(runtimes_new)
-        t_total = default_timer() - t_start
+        rt_sum = sum(runtimes)
+        rt_total = default_timer() - t_start
+        p_fac = rt_sum / rt_total
         if verbose >= 1:
-            # print(f"Total runtime: {runtime_sum:.4f} s + overhead: {t_overhead:.4f} s.")
-            print(f"Sum of runtime: {runtime_sum:.2f}. Elapsed time {t_total:.2f} s.")
+            print(f"Sum of runtime: {rt_sum:.2f}. Elapsed time {rt_total:.2f} s.")
+
+            print(f"paralellness: {p_fac:.2f} " + ":)" if p_fac > 1 else ":/")
 
         return grid_new
 
-    def _accepts_kwargs(self, func):
-        """Helper to check if function accepts **kwargs."""
-        sig = inspect.signature(func)
-        for param in sig.parameters.values():
-            if param.kind == param.VAR_KEYWORD:  # This means **kwargs is present
-                return True
-        return False
-
-
-def eval_objective(objective_and_params: tuple[Callable, dict]):
-    """Compute the objective function for a parameter point
-    ## parameters
-    - objective_and_params (tuple): both things
-    ## returns
-    - objective value
-    - runtime (float): runtime in seconds
-    """
-    ts = default_timer()
-    objective, params = objective_and_params
-    return objective(**params), default_timer() - ts
+    def _eval_obj(self, params: dict):
+        """Compute the objective function for a parameter point
+        ## parameters
+        - params (dict): named parameters to objective
+        ## returns
+        - objective value (float)
+        - runtime (float): runtime in seconds
+        """
+        ts = default_timer()
+        return self._objective(**params), default_timer() - ts

@@ -26,7 +26,7 @@ class PolynomialModel:
         degree: int = 1,
         param_range: dict | None = None,
         interaction: bool = True,
-        target: str = "score",
+        target: str = "value",
     ) -> None:
         if not interaction:
             raise NotImplementedError("only with interactions now")

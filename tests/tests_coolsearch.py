@@ -1,6 +1,4 @@
 import unittest
-import sys
-import os
 import polars as pl
 
 

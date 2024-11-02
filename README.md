@@ -6,17 +6,16 @@ A package for optimizing black-box functions.
 
 ## Features
 
-- Gridsearch
-- Random search
+- Grid-search
+- Random-search
 - Saving previous samples
 - Runtime estimation
 - Polynomial regression model
 
 ## Todo
 
-- Move plotting outside of package!
+- smaller range grid search
 - Gaussian process model
-- parallelization
 
 ### ideas
 

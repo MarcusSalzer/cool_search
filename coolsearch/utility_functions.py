@@ -95,7 +95,7 @@ def monomials(N, d):
     return monomials
 
 
-def test_function_01(x, delay=0):
+def test_function_01(x: float, delay: float = 0) -> float:
     """1D curve, with a clear minimum"""
     if delay > 0:
         sleep(delay)
@@ -106,9 +106,11 @@ def test_function_01(x, delay=0):
 def rastrigin_slow(x, y, iterations=10**7) -> float:
     """A function with the minimum at (0,0).
 
+    Note: slow because of actual computations.
+
     ## parameters
     - x, y (float): for evaluating function
-    - iterations (int): Create artificial slowdown.
+    - iterations (int): Create slowdown.
         - 10**7 gives ca 3.7 seconds
 
     """

@@ -1,5 +1,6 @@
 from timeit import default_timer
 from typing import Callable, Literal
+import os
 
 import numpy as np
 import polars as pl
@@ -25,17 +26,19 @@ class CoolSearch:
         "_param_range",
         "_param_types",
         "samples",
-        "njobs",
+        "n_jobs",
+        "samples_file",
     ]
 
     def __init__(
         self,
-        objective,
+        objective: Callable,
         param_range: dict,
         param_types: dict[str, Literal["int", "float"]] | None = None,
         # min_delta? max_steps?
-        fixed_params={},
-        n_jobs=-1,
+        fixed_params: dict[str, float | int] = {},  # TODO deprecated?
+        n_jobs: int = -1,
+        samples_file: str | None = None,
     ) -> None:
         """Tools for minimizing a function.
 
@@ -45,7 +48,8 @@ class CoolSearch:
         - param_types (dict): specify int or float types. (Defaults to float for all parameters)
         - fixed_params (dict): fixed kwargs provided to `objective`.
         - n_jobs (int): number of parallel jobs. Default: -1 uses cpu_count.
-
+        - samples_file(str|None): file for loading and storing files on disk.
+            - supported formats: `.parquet`, `.csv`, `.json`.
         """
 
         # set constants
@@ -84,16 +88,25 @@ class CoolSearch:
             else:
                 self.n_jobs = n_jobs
 
-        # schema for parameters, score and runtime
+        # schema for parameters, value and runtime
         schema = {
             param: (pl.Float64 if dtype == "float" else pl.Int64)
             for param, dtype in param_types.items()
         }
-        schema["score"] = pl.Float64
+        schema["value"] = pl.Float64
         schema["runtime"] = pl.Float64
 
         # init empty samples-frame
         self.samples = pl.DataFrame(schema=schema)
+
+        ## handle save file
+        self.samples_file = samples_file
+        if samples_file:
+            if os.path.isfile(samples_file) and os.path.getsize(samples_file) > 0:
+                self._load_samples()
+            else:
+                # Save empty samples if not exists
+                self._save_samples()
 
     def __str__(self):
         return "\n".join(
@@ -221,7 +234,6 @@ class CoolSearch:
         steps: int | dict[str, int] | None = 10,
         target_runtime=None,
         verbose: Literal[0, 1, 2] = 2,
-        etr_update_step: int = 1,
     ):
         """Sample objective on an evenly spaced grid.
 
@@ -231,11 +243,6 @@ class CoolSearch:
             - specify per parameter (dict).
         - target_runtime (float): target time (seconds) to estimate number of steps.
         - verbose (int): amount of status information printed
-            - 0: no prints
-            - 1: setup, summary
-            - 2: setup, summary, progress.
-        - etr_update_step (int): if `verbose>=2`, how often to print updates.
-
 
         ## Returns
         - grid_new (DataFrame): new sampled points
@@ -255,15 +262,11 @@ class CoolSearch:
             steps = max(int(round(n_samples ** (1 / self._ndim))), 1)
             if verbose >= 1:
                 print(
-                    "\n".join(
-                        [
-                            f"choose {steps} steps",
-                            f"  -> maximum {steps**self._ndim} samples",
-                        ]
-                    )
+                    f"choose {steps} steps\n",
+                    f"  -> maximum {steps**self._ndim} samples",
                 )
         grid = self.get_grid(steps)
-        return self._eval_samples(grid, verbose, etr_update_step)
+        return self._eval_samples(grid, verbose)
 
     def random_search(
         self,
@@ -287,10 +290,10 @@ class CoolSearch:
         # allow for conditions to choose next step
 
     def marginals(self) -> dict[str, pl.DataFrame]:
-        """Aggregate score values over unique parameter values.
+        """Aggregate values over unique parameter values.
 
         ## Returns
-        - marginals (dict[str,DataFrame]): aggregated scores for each parameter.
+        - marginals (dict[str,DataFrame]): aggregated values for each parameter.
             - columns: parameter, mean, std, median
         """
         marginals = {}
@@ -298,9 +301,11 @@ class CoolSearch:
             marginals[param] = (
                 self.samples.group_by(param)
                 .agg(
-                    pl.col("score").mean().alias("mean"),
-                    pl.col("score").std().alias("std"),
-                    pl.col("score").median().alias("median"),
+                    pl.col("value").mean().alias("mean"),
+                    pl.col("value").std().alias("std"),
+                    pl.col("value").median().alias("median"),
+                    pl.col("value").min().alias("min"),
+                    pl.col("value").max().alias("max"),
                 )
                 .sort(param)
             )
@@ -326,7 +331,7 @@ class CoolSearch:
             self.param_names,
             degree,
             interaction=True,
-            target="score",
+            target="value",
         )
         model.fit(verbose)
         return model
@@ -338,7 +343,6 @@ class CoolSearch:
         self,
         grid_new: pl.DataFrame,
         verbose: int,
-        etr_update_step: int,
     ) -> pl.DataFrame:
         """Evaluate a grid of samples, append new values and runtimes to self.samples."""
 
@@ -356,40 +360,50 @@ class CoolSearch:
             print(f"Searching {len(grid_new)} new parameter points")
             if not self.samples.is_empty():
                 est_runtime = (
-                    len(grid_new) * self.samples["runtime"].mean() / self.njobs
+                    len(grid_new) * self.samples["runtime"].mean() / self.n_jobs
                 )
                 print(f"Estimated runtime: {est_runtime:.2f} s.")
 
         param_dicts = grid_new.iter_rows(named=True)
 
-        p = joblib.Parallel(n_jobs=self.njobs)
+        if verbose >= 1:
+            param_dicts = tqdm(param_dicts)
 
-        output = p(
-            joblib.delayed(self._eval_obj)(params) for params in tqdm(param_dicts)
-        )
         values = []
         runtimes = []
-        for val, rt in output:
-            values.append(val)
-            runtimes.append(rt)
+        if self.n_jobs > 1:
+            para = joblib.Parallel(n_jobs=self.n_jobs)
+            output = para(joblib.delayed(self._eval_obj)(p) for p in param_dicts)
+            for val, rt in output:
+                values.append(val)
+                runtimes.append(rt)
+        else:
+            # single-threaded mode
+            for p in param_dicts:
+                val, rt = self._eval_obj(p)
+                values.append(val)
+                runtimes.append(rt)
 
         grid_new = grid_new.with_columns(
-            score=pl.Series(values),
+            value=pl.Series(values),
             runtime=pl.Series(runtimes),
         )
+
+        # update samples and save if file provided
         self.samples = pl.concat([self.samples, grid_new])
+        if self.samples_file:
+            self._save_samples()
 
         rt_sum = sum(runtimes)
         rt_total = default_timer() - t_start
         p_fac = rt_sum / rt_total
         if verbose >= 1:
-            print(f"Sum of runtime: {rt_sum:.2f}. Elapsed time {rt_total:.2f} s.")
+            print(f"Sum of runtime: {rt_sum:.2f} s. Elapsed time {rt_total:.2f} s.")
+            print(f"Overhead: {rt_total-rt_sum:.4f} s.")
+            if self.n_jobs > 1:
+                print(f"paralellness: {p_fac:.2f} " + ":)" if p_fac > 1 else ":/")
 
-            print(f"paralellness: {p_fac:.2f} " + ":)" if p_fac > 1 else ":/")
-
-        return grid_new
-
-    def _eval_obj(self, params: dict):
+    def _eval_obj(self, params: dict) -> tuple[float, float]:
         """Compute the objective function for a parameter point
         ## parameters
         - params (dict): named parameters to objective
@@ -399,3 +413,42 @@ class CoolSearch:
         """
         ts = default_timer()
         return self._objective(**params), default_timer() - ts
+
+    def _load_samples(self):
+        """Load samples from file"""
+        fp = self.samples_file
+        if fp is None:
+            raise ValueError("No filepath provided")
+        sample_schema = self.samples.schema
+        _, ext = os.path.splitext(fp)
+
+        # load file based on extension
+        if ext == ".parquet":
+            loaded = pl.read_parquet(fp)
+            if loaded.schema != sample_schema:
+                raise ValueError(f"Incorrect file schema: {loaded.schema}")
+        elif ext == ".csv":
+            loaded = pl.read_csv(fp, schema=sample_schema)
+        elif ext == ".json":
+            loaded = pl.read_json(fp, schema=sample_schema)
+        else:
+            raise ValueError(f"Unsupported file format: {ext}")
+
+        self.samples = loaded
+
+    def _save_samples(self):
+        """Save samples to file"""
+        fp = self.samples_file
+        if fp is None:
+            raise ValueError("No filepath provided")
+        _, ext = os.path.splitext(fp)
+
+        # save file based on extension
+        if ext == ".parquet":
+            self.samples.write_parquet(fp)
+        elif ext == ".csv":
+            self.samples.write_csv(fp)
+        elif ext == ".json":
+            self.samples.write_json(fp)
+        else:
+            raise ValueError(f"Unsupported file format: {ext}")

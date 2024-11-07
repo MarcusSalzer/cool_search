@@ -82,11 +82,13 @@ class CoolSearch:
             cpu_count = joblib.cpu_count()
             if n_jobs == -1:
                 self.n_jobs = cpu_count
-            if n_jobs > cpu_count:
+            elif n_jobs > cpu_count:
                 self.n_jobs = cpu_count
                 print(f"Note: setting n_jobs to cpu_count = {cpu_count}")
-            else:
+            elif 0 < n_jobs:
                 self.n_jobs = n_jobs
+            else:
+                raise ValueError(f"Invalid number of jobs: {n_jobs} ({type(n_jobs)})")
 
         # schema for parameters, value and runtime
         schema = {
@@ -150,6 +152,8 @@ class CoolSearch:
         loss_fn: Callable[[np.ndarray, np.ndarray], float],
         invert: bool = False,
         fixed_params={},
+        n_jobs: int = -1,
+        samples_file: str | None = None,
     ):
         """
         Create a `CoolSearch` for tuning a classifier/regressor.
@@ -165,6 +169,9 @@ class CoolSearch:
             - X_train, X_val, Y_train, Y_val
         - loss_fn (Callable[[arraylike, arraylike], float]): loss function to minimize
         - invert (bool): maximize loss function instead
+        - n_jobs (int): number of parallel jobs. Default: -1 uses cpu_count.
+        - samples_file(str|None): file for loading and storing files on disk.
+            - supported formats: `.parquet`, `.csv`, `.json`.
 
         ## returns
         - search (CoolSearch)
@@ -194,7 +201,14 @@ class CoolSearch:
             else:
                 return loss_fn(Y_val, pred_val)
 
-        return cls(objective, param_range, param_types, fixed_params)
+        return cls(
+            objective,
+            param_range,
+            param_types,
+            fixed_params,
+            n_jobs,
+            samples_file,
+        )
 
     def get_grid(self, steps: int | dict[str, int]):
         return util.get_grid(steps, self._param_range, self._param_types)
@@ -416,6 +430,7 @@ class CoolSearch:
 
     def _load_samples(self):
         """Load samples from file"""
+
         fp = self.samples_file
         if fp is None:
             raise ValueError("No filepath provided")
@@ -428,7 +443,7 @@ class CoolSearch:
             if loaded.schema != sample_schema:
                 raise ValueError(f"Incorrect file schema: {loaded.schema}")
         elif ext == ".csv":
-            loaded = pl.read_csv(fp, schema=sample_schema)
+            loaded = pl.read_csv(fp)
         elif ext == ".json":
             loaded = pl.read_json(fp, schema=sample_schema)
         else:

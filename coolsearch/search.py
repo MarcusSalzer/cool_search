@@ -1,3 +1,4 @@
+from enum import Enum, auto
 from timeit import default_timer
 from typing import Callable, Literal
 import os
@@ -15,28 +16,122 @@ except ImportError:
     joblib = None
 
 
+class ParamMode(Enum):
+    RANGE = auto()
+    CONSTANT = auto()
+    OPTIONS = auto()
+
+
+class Param:
+    """A parameter that can generate ranges??
+    Note: allow changing mode, range and default value, but not datatype"""
+
+    _counter = 0
+
+    def __init__(
+        self,
+        name: str | None = None,
+        searchable: bool = False,
+        default: int | float | str | bool | list | None = None,
+        param_range: tuple | None = None,
+        options: list | None = None,
+    ) -> None:
+        if name is None:
+            name = f"p_{Param._counter:02}"
+            Param._counter += 1
+
+        # infer default
+        if default is None:
+            if param_range is not None:
+                # infer default from range
+                mean = (param_range[0] + param_range[1]) / 2
+                if isinstance(param_range[0], int):
+                    default = int(mean)
+                else:
+                    default = mean
+            elif options is not None:
+                # just take first option
+                default = options[0]
+            else:
+                raise ValueError("Requires at least one of default, range, options")
+
+        if param_range is not None:
+            if len(param_range) != 2:
+                raise ValueError(f"Expects range as (min,max), not {param_range}")
+
+        self.name = name
+        self.pl_dtype = self.infer_polars_dtype(default)
+        self.searchable = searchable
+        self.param_range = param_range
+        self.default = default
+        self.options = options
+
+    def __str__(self) -> str:
+        stat = f"({self.default})"
+        if self.param_range is not None:
+            stat += f" {self.param_range[0]} <-> {self.param_range[1]}"
+
+        if self.searchable:
+            stat += " SEARCHABLE"
+        else:
+            stat += " FIXED"
+
+        return f"{self.name}: {stat}"
+
+    def grid(self, steps: int) -> np.ndarray:
+        if (not self.searchable) or steps == 1:
+            return np.array([self.default])
+
+        ## if not fixed
+        # prioritize: 1. options 2. range
+        if self.options is not None:
+            return np.array(self.options[:steps])
+        if self.param_range is not None:
+            if isinstance(self.param_range[0], float):
+                return np.linspace(*self.param_range, steps)
+            elif isinstance(self.param_range[0], int):
+                return np.unique(np.linspace(*self.param_range, steps, dtype=int))
+
+    def infer_polars_dtype(self, value):
+        if type(value) is int:
+            return pl.Int32
+        elif type(value) is bool:
+            return pl.Boolean
+        elif type(value) is float:
+            return pl.Float64
+        elif type(value) is str:
+            return pl.String
+        else:
+            raise ValueError("Unsupported type for polars dtype inference.")
+
+
+def make_mesh(params: list[Param], steps: int = 3):
+    # Create the grid by meshing and flattening the arrays
+    arrays = [p.grid(steps) for p in params]
+    schema = {p.name: p.pl_dtype for p in params}
+
+    mesh = np.meshgrid(*arrays, indexing="ij")
+    param_points = [
+        dict(zip(schema.keys(), point)) for point in zip(*(np.ravel(m) for m in mesh))
+    ]
+
+    return pl.DataFrame(
+        param_points,
+        schema=schema,
+        orient="row",
+    )
+
+
 class CoolSearch:
     """Minimization of a black box function."""
 
-    __slots__ = [
-        "_objective",
-        "dtype",
-        "_fixed_params",
-        "_ndim",
-        "_param_range",
-        "_param_types",
-        "samples",
-        "n_jobs",
-        "samples_file",
-    ]
+    # SLOTS?
 
     def __init__(
         self,
         objective: Callable,
-        param_range: dict,
-        param_types: dict[str, Literal["int", "float"]] | None = None,
-        # min_delta? max_steps?
-        fixed_params: dict[str, float | int] = {},  # TODO deprecated?
+        parameters: dict[str, int | float | str | bool | tuple | list],
+        values: list[str] = "value",  # like this?
         n_jobs: int = -1,
         samples_file: str | None = None,
     ) -> None:
@@ -44,9 +139,7 @@ class CoolSearch:
 
         ## parameters
         - objective (callable):
-        - param_range (dict): ranges for all parameters
-        - param_types (dict): specify int or float types. (Defaults to float for all parameters)
-        - fixed_params (dict): fixed kwargs provided to `objective`.
+        - parameters: TODO
         - n_jobs (int): number of parallel jobs. Default: -1 uses cpu_count.
         - samples_file(str|None): file for loading and storing files on disk.
             - supported formats: `.parquet`, `.csv`, `.json`.
@@ -54,25 +147,86 @@ class CoolSearch:
 
         # set constants
         self._objective = objective
-        self._param_range = param_range
-        self._fixed_params = fixed_params
 
-        # set parameter types, default to float
-        if param_types is None:
-            param_types = dict.fromkeys(param_range.keys(), "float")
+        # schema for parameters, value and runtime
+        # this is permanent to allow serialization
+        schema = {}
 
-        # Validate the parameter types
-        for param, p_type in param_types.items():
-            if p_type not in {"int", "float"}:
-                raise ValueError(
-                    f"Unsupported parameter type: '{p_type}' for parameter '{param}'."
-                )
-        # Validate dict keys
-        if set(param_range.keys()) != set(param_types.keys()):
-            raise ValueError("Inconsistent parameter names")
+        # Modes for parameters
+        # can be change to change the focus of searh
+        param_modes = {}
 
-        self._param_types = param_types
-        self._ndim = len(self._param_range)
+        ## Argument validation and schema inference
+        # TODO Cleanup and use Param-class
+        for p_name, value in parameters.items():
+            if not isinstance(p_name, str):
+                raise ValueError(f"{p_name} is not a string")
+
+            # Determine schema type and mode based on `value`
+            if isinstance(value, int):
+                schema[p_name] = pl.Int32
+                param_modes[p_name] = ParamMode.CONSTANT
+                print(p_name, ": fixed int param")
+
+            elif isinstance(value, float):
+                schema[p_name] = pl.Float64
+                param_modes[p_name] = ParamMode.CONSTANT
+                print(p_name, ": fixed float param")
+
+            elif isinstance(value, str):
+                schema[p_name] = pl.String
+                param_modes[p_name] = ParamMode.CONSTANT
+                print(p_name, ": fixed string param")
+
+            elif isinstance(value, bool):
+                schema[p_name] = pl.Boolean
+                param_modes[p_name] = ParamMode.CONSTANT
+                print(p_name, ": fixed bool param")
+
+            elif isinstance(value, tuple):
+                if len(value) != 2:
+                    raise ValueError(f"cannot parse {value} as (min, max)")
+
+                t1, t2 = type(value[0]), type(value[1])
+                if t1 != t2:
+                    raise ValueError(f"inconsistent types in range ({t1}, {t2})")
+
+                if t1 is int:
+                    schema[p_name] = pl.Int32
+                    param_modes[p_name] = ParamMode.RANGE
+                    print(p_name, ": ranged int param")
+                elif t1 is float:
+                    schema[p_name] = pl.Float64
+                    param_modes[p_name] = ParamMode.RANGE
+                    print(p_name, ": ranged float param")
+                else:
+                    raise ValueError(f"Cannot make range for {p_name} ({t1})")
+
+            elif isinstance(value, list):
+                if not value:
+                    raise ValueError(f"List for {p_name} cannot be empty")
+
+                first_type = type(value[0])
+                if first_type is int:
+                    schema[p_name] = pl.Int32
+                elif first_type is float:
+                    schema[p_name] = pl.Float64
+                elif first_type is str:
+                    schema[p_name] = pl.String
+                else:
+                    raise ValueError(
+                        f"Unsupported type in list for {p_name} ({first_type})"
+                    )
+
+                # Ensure homogeneity within list
+                if not all(isinstance(v, first_type) for v in value):
+                    raise ValueError(f"Inconsistent types in list for {p_name}")
+
+                param_modes[p_name] = ParamMode.OPTIONS
+                print(p_name, ": fixed list of options")
+
+            else:
+                raise ValueError(f"Unsupported type for {p_name} ({type(value)})")
 
         ## handle number of parallel jobs
         if joblib is None:
@@ -90,11 +244,6 @@ class CoolSearch:
             else:
                 raise ValueError(f"Invalid number of jobs: {n_jobs} ({type(n_jobs)})")
 
-        # schema for parameters, value and runtime
-        schema = {
-            param: (pl.Float64 if dtype == "float" else pl.Int64)
-            for param, dtype in param_types.items()
-        }
         schema["value"] = pl.Float64
         schema["runtime"] = pl.Float64
 
@@ -107,7 +256,7 @@ class CoolSearch:
             if os.path.isfile(samples_file) and os.path.getsize(samples_file) > 0:
                 self._load_samples()
             else:
-                # Save empty samples if not exists
+                # Save (empty) samples if not exists
                 self._save_samples()
 
     def __str__(self):
@@ -119,28 +268,8 @@ class CoolSearch:
         )
 
     @property
-    def param_names(self):
-        return list(self._param_range.keys())
-
-    # def get_param_values(self, factors: pl.DataFrame | np.ndarray):
-    #     """Compute actual parameter values from factor in [0,1]."""
-
-    #     try:
-    #         names = factors.columns
-    #     except AttributeError:
-    #         names = self.param_names
-
-    #     factors = factors.reshape(-1, self.ndim)
-    #     N = factors.shape[0]
-
-    #     pr = self.param_range
-
-    #     scale = np.vstack((np.array([pr[k][1] - pr[k][0] for k in names]).T,) * N)
-    #     offset = np.vstack((np.array([pr[k][0] for k in names]).T,) * N)
-
-    #     return pl.DataFrame(
-    #         factors * scale + offset, schema={k: self.param_types[k] for k in names}
-    #     )
+    def schema(self):
+        return self.samples.schema
 
     @classmethod
     def model_validate(
@@ -160,11 +289,7 @@ class CoolSearch:
 
         ## parameters
         - model: A classifier/regressor that implements
-            - set_params()
-            - fit()
-            - predict()
-        - param_range (dict[str, tuple]): ranges for parameters to tune
-        - param_types (dict[str, str]): types for parameters to tune
+        - params
         - data (tuple): data for training and validation
             - X_train, X_val, Y_train, Y_val
         - loss_fn (Callable[[arraylike, arraylike], float]): loss function to minimize
@@ -201,17 +326,10 @@ class CoolSearch:
             else:
                 return loss_fn(Y_val, pred_val)
 
-        return cls(
-            objective,
-            param_range,
-            param_types,
-            fixed_params,
-            n_jobs,
-            samples_file,
-        )
+        return cls()  # TODO
 
     def get_grid(self, steps: int | dict[str, int]):
-        return util.get_grid(steps, self._param_range, self._param_types)
+        raise NotImplementedError("TODO")
 
     def get_random_samples(
         self,

@@ -14,6 +14,8 @@ from typing import Literal
 import numpy as np
 import polars as pl
 
+from coolsearch.Param import Param
+
 
 def get_grid(
     steps: int | dict[str, int],
@@ -151,3 +153,30 @@ class Scaler:
 
     def inverse(self, X_standard: np.ndarray | pl.DataFrame):
         return X_standard * self.std + self.mu
+
+
+def make_mesh(params: dict[str, Param] | list[Param], steps: int | dict[str, int] = 3):
+    # standardixe argument types
+    if isinstance(params, list):
+        params = {p.name: p for p in params}
+
+    if isinstance(steps, int):
+        steps = dict.fromkeys(params.keys(), steps)
+
+    if steps.keys() != params.keys():
+        raise ValueError("inconsistent parameter names")
+
+    # Create the grid by meshing and flattening the arrays
+    arrays = [p.grid(steps[k]) for k, p in params.items()]
+    schema = {k: p.pl_dtype for k, p in params.items()}
+
+    mesh = np.meshgrid(*arrays, indexing="ij")
+
+    points = zip(*(np.ravel(m) for m in mesh))
+    param_points = [dict(zip(schema.keys(), point)) for point in points]
+
+    return pl.DataFrame(
+        param_points,
+        schema=schema,
+        orient="row",
+    )

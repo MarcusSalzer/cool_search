@@ -1,6 +1,7 @@
 import unittest
 
-from coolsearch.search import Param, make_mesh
+from coolsearch.Param import Param
+from coolsearch.utility_functions import make_mesh
 import numpy as np
 import polars as pl
 
@@ -99,3 +100,13 @@ class TestMesh(unittest.TestCase):
         self.assertEqual(m[p2.name].dtype, pl.Float64)
         self.assertEqual(m[p3.name].dtype, pl.Int32)
         self.assertEqual(m[p4.name].dtype, pl.String)
+
+    def test_str_float(self):
+        p1 = Param(searchable=True, param_range=(0.0, 1.0))
+        p2 = Param(searchable=True, options=["A", "B", "C"])
+        m = make_mesh([p1, p2], 20)
+
+        self.assertEqual(m.shape, (60, 2))
+        self.assertListEqual(m[p2.name].to_list(), ["A", "B", "C"] * 20)
+        self.assertEqual(m[p1.name].dtype, pl.Float64)
+        self.assertEqual(m[p2.name].dtype, pl.String)

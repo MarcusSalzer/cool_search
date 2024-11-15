@@ -1,3 +1,4 @@
+from enum import Enum, auto
 from timeit import default_timer
 from typing import Callable, Literal
 import os
@@ -6,9 +7,7 @@ import numpy as np
 import polars as pl
 from tqdm import tqdm
 
-from coolsearch.Param import Param
 from coolsearch.models import PolynomialModel
-from coolsearch.utility_functions import make_mesh
 
 try:
     import joblib
@@ -16,15 +15,14 @@ except ImportError:
     joblib = None
 
 
-class CoolSearch:
-    """Minimization of a black box function.
+class ParamMode(Enum):
+    RANGE = auto()
+    CONSTANT = auto()
+    OPTIONS = auto()
 
-    Note: we assume that
-    - the function takes a number of parameters
-        - these are of type int, float, str, bool
-    - the function returns some values
-        - these are floats
-    """
+
+class CoolSearch:
+    """Minimization of a black box function."""
 
     # SLOTS?
 
@@ -32,9 +30,7 @@ class CoolSearch:
         self,
         objective: Callable,
         parameters: dict[str, int | float | str | bool | tuple | list],
-        value_names: list[str] = ["value"],  # like this?
-        # TODO  No! instead, let the user return either a single value or a dict
-        # then we avoid mismatches! (how to set up columns though? first after 1 run?)
+        values: list[str] = "value",  # like this?
         n_jobs: int = -1,
         samples_file: str | None = None,
     ) -> None:
@@ -51,17 +47,85 @@ class CoolSearch:
         # set constants
         self._objective = objective
 
+        # schema for parameters, value and runtime
+        # this is permanent to allow serialization
+        schema = {}
+
+        # Modes for parameters
+        # can be change to change the focus of searh
+        param_modes = {}
+
         ## Argument validation and schema inference
-        self.params: dict[str, Param] = {}
-        for p_name, val in parameters.items():
-            if isinstance(val, (int, float, str, bool)):
-                self.params[p_name] = Param(searchable=False, default=val)
-            elif isinstance(val, list):
-                self.params[p_name] = Param(searchable=True, options=val)
-            elif isinstance(val, tuple):
-                self.params[p_name] = Param(searchable=True, param_range=val)
+        # TODO Cleanup and use Param-class
+        for p_name, value in parameters.items():
+            if not isinstance(p_name, str):
+                raise ValueError(f"{p_name} is not a string")
+
+            # Determine schema type and mode based on `value`
+            if isinstance(value, int):
+                schema[p_name] = pl.Int32
+                param_modes[p_name] = ParamMode.CONSTANT
+                print(p_name, ": fixed int param")
+
+            elif isinstance(value, float):
+                schema[p_name] = pl.Float64
+                param_modes[p_name] = ParamMode.CONSTANT
+                print(p_name, ": fixed float param")
+
+            elif isinstance(value, str):
+                schema[p_name] = pl.String
+                param_modes[p_name] = ParamMode.CONSTANT
+                print(p_name, ": fixed string param")
+
+            elif isinstance(value, bool):
+                schema[p_name] = pl.Boolean
+                param_modes[p_name] = ParamMode.CONSTANT
+                print(p_name, ": fixed bool param")
+
+            elif isinstance(value, tuple):
+                if len(value) != 2:
+                    raise ValueError(f"cannot parse {value} as (min, max)")
+
+                t1, t2 = type(value[0]), type(value[1])
+                if t1 != t2:
+                    raise ValueError(f"inconsistent types in range ({t1}, {t2})")
+
+                if t1 is int:
+                    schema[p_name] = pl.Int32
+                    param_modes[p_name] = ParamMode.RANGE
+                    print(p_name, ": ranged int param")
+                elif t1 is float:
+                    schema[p_name] = pl.Float64
+                    param_modes[p_name] = ParamMode.RANGE
+                    print(p_name, ": ranged float param")
+                else:
+                    raise ValueError(f"Cannot make range for {p_name} ({t1})")
+
+            elif isinstance(value, list):
+                if not value:
+                    raise ValueError(f"List for {p_name} cannot be empty")
+
+                first_type = type(value[0])
+                if first_type is int:
+                    schema[p_name] = pl.Int32
+                elif first_type is float:
+                    schema[p_name] = pl.Float64
+                elif first_type is str:
+                    schema[p_name] = pl.String
+                else:
+                    raise ValueError(
+                        f"Unsupported type in list for {p_name} ({first_type})"
+                    )
+
+                # Ensure homogeneity within list
+                if not all(isinstance(v, first_type) for v in value):
+                    raise ValueError(f"Inconsistent types in list for {p_name}")
+
+                param_modes[p_name] = ParamMode.OPTIONS
+                print(p_name, ": fixed list of options")
+
             else:
-                raise ValueError(f"Unsupported parameter value: {val}")
+                raise ValueError(f"Unsupported type for {p_name} ({type(value)})")
 
         ## handle number of parallel jobs
         if joblib is None:
@@ -79,17 +143,7 @@ class CoolSearch:
             else:
                 raise ValueError(f"Invalid number of jobs: {n_jobs} ({type(n_jobs)})")
 
-        ## schema for parameters, value and runtime
-        # this is permanent to allow serialization
-        schema = {p_name: p.pl_dtype for p_name, p in self.params.items()}
-
-        # Add the things we're measuring to schema.
-        for v_name in value_names:
-            schema[v_name] = pl.Float64
-
-        # We will also measure runtime
-        if "runtime" in schema.keys():
-            raise ValueError("Sorry, `runtime` is reserved for tracking that.")
+        schema["value"] = pl.Float64
         schema["runtime"] = pl.Float64
 
         # init empty samples-frame
@@ -107,7 +161,7 @@ class CoolSearch:
     def __str__(self):
         return "\n".join(
             [
-                f"{self.ndim} dimensional search",
+                f"{self._ndim} dimensional search",
                 f"  - has {len(self.samples)} samples",
             ],
         )
@@ -116,15 +170,12 @@ class CoolSearch:
     def schema(self):
         return self.samples.schema
 
-    @property
-    def ndim(self):
-        return len(self.params.keys())
-
     @classmethod
     def model_validate(
         cls,
         model,
-        parameters: dict[str, int | float | str | bool | tuple | list],
+        param_range: dict[str, tuple],
+        param_types: dict[str, Literal["float", "int"]] | None,
         data: tuple,
         loss_fn: Callable[[np.ndarray, np.ndarray], float],
         invert: bool = False,
@@ -137,7 +188,7 @@ class CoolSearch:
 
         ## parameters
         - model: A classifier/regressor that implements
-        - params TODO!
+        - params
         - data (tuple): data for training and validation
             - X_train, X_val, Y_train, Y_val
         - loss_fn (Callable[[arraylike, arraylike], float]): loss function to minimize
@@ -174,39 +225,40 @@ class CoolSearch:
             else:
                 return loss_fn(Y_val, pred_val)
 
-        return cls(
-            objective,
-            parameters,
-            values=["loss"],
-            n_jobs=n_jobs,
-            samples_file=samples_file,
-        )
-
-    @classmethod
-    def model_cv():
-        raise NotImplementedError("is this separate from model_val?")
+        return cls()  # TODO
 
     def get_grid(self, steps: int | dict[str, int]):
-        grid = make_mesh(self.params, steps)
-        return grid
+        raise NotImplementedError("TODO")
 
     def get_random_samples(
         self,
         N,
         seed=None,
     ):
-        # rng = np.random.default_rng(seed)
+        rng = np.random.default_rng(seed)
 
         grid = []
-        raise NotImplementedError("randsearch new impl?")
         for _ in range(N):
-            grid.append(None)
+            param_values = []
+            for param, r in self._param_range.items():
+                param_type = self._param_types[param]
+
+                if param_type == "int":
+                    param_values.append(rng.integers(r[0], r[1]))
+                elif param_type == "float":
+                    param_values.append(rng.uniform(r[0], r[1]))
+
+            grid.append(param_values)
 
         return pl.DataFrame(
             grid,
-            schema=self.samples.select(self.param.keys()).schema,
+            schema=self.samples.select(self.param_names).schema,
             orient="row",
         ).unique()
+
+    def make_factor_grid(self, steps):
+        mesh = np.meshgrid(*[np.linspace(0, 1, steps)] * self._ndim)
+        return np.vstack(list(map(np.ravel, mesh))).T
 
     def grid_search(
         self,
@@ -238,11 +290,11 @@ class CoolSearch:
 
             # choose steps to approximately run for ´target_runtime´ seconds
             n_samples = target_runtime / self.samples["runtime"].mean()
-            steps = max(int(round(n_samples ** (1 / self.ndim))), 1)
+            steps = max(int(round(n_samples ** (1 / self._ndim))), 1)
             if verbose >= 1:
                 print(
                     f"choose {steps} steps\n",
-                    f"  -> maximum {steps**self.ndim} samples",
+                    f"  -> maximum {steps**self._ndim} samples",
                 )
         grid = self.get_grid(steps)
         return self._eval_samples(grid, verbose)
@@ -276,7 +328,7 @@ class CoolSearch:
             - columns: parameter, mean, std, median
         """
         marginals = {}
-        for param in self.params.keys():
+        for param in self._param_range.keys():
             marginals[param] = (
                 self.samples.group_by(param)
                 .agg(
@@ -307,7 +359,7 @@ class CoolSearch:
 
         model = PolynomialModel(
             self.samples,
-            self.params.keys(),
+            self.param_names,
             degree,
             interaction=True,
             target="value",
@@ -330,8 +382,8 @@ class CoolSearch:
 
         # avoid previously sampled points
         grid_new = grid_new.join(
-            self.samples.select(self.params.keys()),
-            on=self.params.keys(),
+            self.samples.select(self.param_names),
+            on=self.param_names,
             how="anti",
         )
 

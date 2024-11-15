@@ -2,8 +2,6 @@ import unittest
 import tempfile
 
 from coolsearch.search import CoolSearch
-from coolsearch import utility_functions as util
-import numpy as np
 
 
 def f(x, y):

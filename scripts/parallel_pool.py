@@ -1,4 +1,3 @@
-import os
 from multiprocessing import pool
 from timeit import default_timer
 from typing import Callable

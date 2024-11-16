@@ -7,9 +7,6 @@ import polars as pl
 
 
 class TestParam(unittest.TestCase):
-    def setUp(self) -> None:
-        pass
-
     def test_fixed_int_default(self):
         p = Param(searchable=False, default=7)
 
@@ -56,6 +53,16 @@ class TestParam(unittest.TestCase):
         )
 
         self.assertEqual(p.pl_dtype, pl.Boolean, "Mismatched polars dtype")
+
+    def test_missing_info(self):
+        with self.assertRaises(ValueError) as cm:
+            Param("p01", False)
+
+        self.assertEqual(
+            str(cm.exception),
+            "Requires at least one of default, range, options",
+            "wrong exception msg",
+        )
 
 
 class TestMesh(unittest.TestCase):

@@ -156,7 +156,6 @@ class Scaler:
 
 
 def make_mesh(params: dict[str, Param] | list[Param], steps: int | dict[str, int] = 3):
-    # standardixe argument types
     if isinstance(params, list):
         params = {p.name: p for p in params}
 

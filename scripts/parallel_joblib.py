@@ -1,15 +1,10 @@
-import os
-from math import sqrt
 from timeit import default_timer
-from typing import Callable
 
 from joblib import Parallel, delayed
 import joblib
 
 from coolsearch.utility_functions import rastrigin_slow
 from tqdm import tqdm
-
-# cpu_count = multiprocessing.cpu_count()
 
 
 NTHREADS = joblib.cpu_count()

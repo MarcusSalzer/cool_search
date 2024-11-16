@@ -2,7 +2,6 @@ from timeit import default_timer
 from typing import Callable, Literal
 import os
 
-import numpy as np
 import polars as pl
 from tqdm import tqdm
 
@@ -30,11 +29,8 @@ class CoolSearch:
 
     def __init__(
         self,
-        objective: Callable,
+        objective: Callable[..., float | dict[str, float]],
         parameters: dict[str, int | float | str | bool | tuple | list],
-        value_names: list[str] = ["value"],  # like this?
-        # TODO  No! instead, let the user return either a single value or a dict
-        # then we avoid mismatches! (how to set up columns though? first after 1 run?)
         n_jobs: int = -1,
         samples_file: str | None = None,
     ) -> None:
@@ -42,6 +38,7 @@ class CoolSearch:
 
         ## parameters
         - objective (callable):
+            - Multiple returns as dict??
         - parameters: TODO
         - n_jobs (int): number of parallel jobs. Default: -1 uses cpu_count.
         - samples_file(str|None): file for loading and storing files on disk.
@@ -84,12 +81,11 @@ class CoolSearch:
         schema = {p_name: p.pl_dtype for p_name, p in self.params.items()}
 
         # Add the things we're measuring to schema.
-        for v_name in value_names:
-            schema[v_name] = pl.Float64
+        schema["value"] = pl.Float64
 
         # We will also measure runtime
         if "runtime" in schema.keys():
-            raise ValueError("Sorry, `runtime` is reserved for tracking that.")
+            raise ValueError("Sorry, `runtime` is reserved for tracking runtime.")
         schema["runtime"] = pl.Float64
 
         # init empty samples-frame
@@ -126,10 +122,8 @@ class CoolSearch:
         model,
         parameters: dict[str, int | float | str | bool | tuple | list],
         data: tuple,
-        loss_fn: Callable[[np.ndarray, np.ndarray], float],
-        invert: bool = False,
-        fixed_params={},
-        n_jobs: int = -1,
+        metrics: dict[str, Callable] | Callable,
+        n_jobs: int = 1,
         samples_file: str | None = None,
     ):
         """
@@ -140,9 +134,8 @@ class CoolSearch:
         - params TODO!
         - data (tuple): data for training and validation
             - X_train, X_val, Y_train, Y_val
-        - loss_fn (Callable[[arraylike, arraylike], float]): loss function to minimize
-        - invert (bool): maximize loss function instead
-        - n_jobs (int): number of parallel jobs. Default: -1 uses cpu_count.
+        - metrics: TODO
+        - n_jobs (int): number of parallel jobs. Default: 1
         - samples_file(str|None): file for loading and storing files on disk.
             - supported formats: `.parquet`, `.csv`, `.json`.
 
@@ -163,21 +156,20 @@ class CoolSearch:
         else:
             raise ValueError(f"Unsupported number of data arrays ({len(data)})")
 
+        if not isinstance(metrics, dict):
+            metrics = {"value": metrics}
+
         def objective(**kwargs):
-            model.set_params(**kwargs, **fixed_params)
+            model.set_params(**kwargs)
             model.fit(X_train, Y_train)
 
             pred_val = model.predict(X_val)
 
-            if invert:
-                return -loss_fn(Y_val, pred_val)
-            else:
-                return loss_fn(Y_val, pred_val)
+            return {k: m(Y_val, pred_val) for k, m in metrics.items()}
 
         return cls(
             objective,
             parameters,
-            values=["loss"],
             n_jobs=n_jobs,
             samples_file=samples_file,
         )
@@ -317,6 +309,7 @@ class CoolSearch:
 
     def model_GP():
         """Gaussian process model of function"""
+        raise NotImplementedError("TODO: Lose coupling? senf samples to modeling?")
 
     def _eval_samples(
         self,
@@ -351,6 +344,7 @@ class CoolSearch:
         values = []
         runtimes = []
         if self.n_jobs > 1:
+            # multi-thread mode
             para = joblib.Parallel(n_jobs=self.n_jobs)
             output = para(joblib.delayed(self._eval_obj)(p) for p in param_dicts)
             for val, rt in output:
@@ -363,13 +357,35 @@ class CoolSearch:
                 values.append(val)
                 runtimes.append(rt)
 
+        # insert new runtimes
         grid_new = grid_new.with_columns(
-            value=pl.Series(values),
             runtime=pl.Series(runtimes),
         )
+        if all(isinstance(v, dict) for v in values):
+            keys = values[0].keys()
+            # insert multiple columns
+            grid_new = grid_new.with_columns(
+                (pl.Series(k, [v[k] for v in values]) for k in keys)
+            )
+        else:
+            # insert single value
+            grid_new = grid_new.with_columns(
+                pl.Series("value", values),
+            )
 
-        # update samples and save if file provided
-        self.samples = pl.concat([self.samples, grid_new])
+        # allow adding columns
+        new_columns = set(grid_new.columns) - set(self.samples.columns)
+        self.samples = self.samples.with_columns(
+            (pl.Series(col, [None] * len(self.samples)) for col in new_columns)
+        )
+
+        # ensure columns are sorted
+        cols = sorted(self.samples.columns)
+        self.samples = self.samples.select(cols)
+        grid_new = grid_new.select(cols)
+
+        # include new samples and save if file provided
+        self.samples = pl.concat([self.samples, grid_new], how="vertical")
         if self.samples_file:
             self._save_samples()
 
@@ -382,12 +398,12 @@ class CoolSearch:
             if self.n_jobs > 1:
                 print(f"paralellness: {p_fac:.2f} " + ":)" if p_fac > 1 else ":/")
 
-    def _eval_obj(self, params: dict) -> tuple[float, float]:
+    def _eval_obj(self, params: dict) -> tuple[float | dict[str | float], float]:
         """Compute the objective function for a parameter point
         ## parameters
         - params (dict): named parameters to objective
         ## returns
-        - objective value (float)
+        - objective value (or dict of values)
         - runtime (float): runtime in seconds
         """
         ts = default_timer()
@@ -408,7 +424,7 @@ class CoolSearch:
             if loaded.schema != sample_schema:
                 raise ValueError(f"Incorrect file schema: {loaded.schema}")
         elif ext == ".csv":
-            loaded = pl.read_csv(fp)
+            loaded = pl.read_csv(fp, schema=sample_schema)
         elif ext == ".json":
             loaded = pl.read_json(fp, schema=sample_schema)
         else:

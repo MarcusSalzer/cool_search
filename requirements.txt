@@ -1,3 +1,5 @@
 setuptools>=70.0.0
 numpy==2.1.0
 polars==1.5.0
+tqdm
+joblib

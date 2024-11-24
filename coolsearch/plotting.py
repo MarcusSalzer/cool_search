@@ -13,6 +13,8 @@ def set_plotly_template():
     plot_temp.layout.width = 400
     plot_temp.layout.height = 300
     plot_temp.layout.autosize = False
+    plot_temp.layout.paper_bgcolor = "rgba(0,0,0,0)"
+    plot_temp.layout.plot_bgcolor = "rgba(0,0,0,0)"
     pio.templates.default = plot_temp
 
 

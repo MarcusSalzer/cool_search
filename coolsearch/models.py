@@ -1,5 +1,4 @@
 import math
-from typing import Literal
 import numpy as np
 import polars as pl
 
@@ -9,51 +8,45 @@ import coolsearch.utility_functions as util
 class PolynomialModel:
     """Polynomial regression"""
 
-    __slots__ = [
-        "beta",
-        "degree",
-        "features",
-        "param_range",
-        "residuals",
-        "X_poly",
-        "y",
-    ]
-
     def __init__(
         self,
         samples: pl.DataFrame,
-        features: list[str] | None = None,
         degree: int = 1,
         param_range: dict | None = None,
-        interaction: bool = True,
         target: str = "value",
+        interaction: bool = True,
+        verbose=True,
     ) -> None:
         if not interaction:
             raise NotImplementedError("only with interactions now")
+
+        if len(samples) < degree + 1:
+            raise ValueError(f"Needs more samples: {len(samples)}<{degree} + 1")
 
         self.degree = degree
 
         # initialize ranges if missing
         if param_range is None:
-            param_range = dict.fromkeys(features)
-            for k in features:
+            param_range = dict.fromkeys(samples.drop(target).columns)
+            for k in param_range.keys():
                 param_range[k] = (
                     samples[k].min(),
                     samples[k].max(),
                 )
         self.param_range = param_range
 
-        if param_range:
-            self.features = list(map(str, param_range.keys()))
-        else:
-            self.features = features
-
         self.y = samples[target].to_numpy()
-        X = samples.select(self.features).to_numpy()
-        self.X_poly = polynomial_features(X, self.degree, verbose=False)
+
+        self.X_poly = polynomial_features(
+            samples.drop(target).to_numpy(),
+            self.degree,
+            verbose=verbose,
+        )
 
         if self.y.shape[0] != self.X_poly.shape[0]:
             raise ValueError("Inconsistent sample count")
+
+        self._fit(verbose=verbose)
 
     def __str__(self) -> str:
         lines = [
@@ -62,16 +55,16 @@ class PolynomialModel:
         ]
         return "\n".join(lines)
 
-    def fit(self, verbose=True):
+    def _fit(self, verbose=True):
         """Fit model by least squares."""
         X = self.X_poly
         y = self.y
-        N, M = X.shape
+        M, N = X.shape
 
         if verbose:
-            print(f"{N} samples\n{M} poly features")
+            print(f"{M} samples\n{N} poly features")
 
-            if N < M:
+            if M < N:
                 print("Note: under-determined system")
 
         beta, res, _, _ = np.linalg.lstsq(X, y, rcond=None)
@@ -84,8 +77,8 @@ class PolynomialModel:
 
     @property
     def polynomial(self):
-        if len(self.features) != 1:
-            raise NotImplementedError
+        if len(self.param_range.keys()) != 1:
+            raise NotImplementedError("Multivariate polynomials unsupported")
 
         return np.polynomial.Polynomial(self.beta)
 

@@ -364,7 +364,7 @@ class CoolSearch:
             interaction=True,
             target="value",
         )
-        model.fit(verbose)
+        model._fit(verbose)
         return model
 
     def model_GP():

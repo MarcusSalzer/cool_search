@@ -20,17 +20,12 @@ class TestPolyModel1D(unittest.TestCase):
         )
 
     def test_degree2(self):
-        model = PolynomialModel(self.samples, ["x"], 2, target="f")
-        with self.assertRaises(AttributeError):
-            model.beta
-
-        model.fit(verbose=False)
-        beta = model.beta
+        model = PolynomialModel(self.samples, 2, target="f")
 
         f_pred = model.yhat
         f_poly = model.polynomial(self.samples["x"].to_numpy())
 
-        self.assertEqual(2 + 1, len(beta), "Incorrect number of coefs.")
+        self.assertEqual(2 + 1, len(model.beta), "Incorrect number of coefs.")
 
         self.assertListEqual(
             f_poly.round(DECIMALS).tolist(),
@@ -39,8 +34,7 @@ class TestPolyModel1D(unittest.TestCase):
         )
 
     def test_exact_degree(self):
-        model = PolynomialModel(self.samples, ["x"], len(self.samples) - 1, target="f")
-        model.fit(verbose=False)
+        model = PolynomialModel(self.samples, len(self.samples) - 1, target="f")
 
         f_true = self.samples["f"].to_numpy()
         f_pred = model.yhat
@@ -73,12 +67,10 @@ class TestPolymodel1dCorrectPoly(unittest.TestCase):
         )
 
     def test_quadratic(self):
-        model = PolynomialModel(self.samples, ["x"], 2, target="f")
+        model = PolynomialModel(self.samples, 2, target="f")
 
-        model.fit(verbose=False)
-        beta = model.beta
         self.assertListEqual(
-            beta.round(DECIMALS).tolist(),
+            model.beta.round(DECIMALS).tolist(),
             [7, -3, 1],
             "Incorrect coefficients for quadratic fit",
         )

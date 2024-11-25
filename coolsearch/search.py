@@ -95,7 +95,7 @@ class CoolSearch:
         self.samples_file = samples_file
         if samples_file:
             if os.path.isfile(samples_file) and os.path.getsize(samples_file) > 0:
-                self._load_samples()
+                self.samples = self._load_samples()
             else:
                 # Save (empty) samples if not exists
                 self._save_samples()
@@ -285,33 +285,8 @@ class CoolSearch:
 
         return marginals
 
-    def model_poly(self, degree: int = 1, verbose=True):
-        """Polynomial model of function.
-
-        ## parameters
-        - degree (int): maximum degree of polynomial
-
-        ## returns
-        - model_poly (PolynomialModel): model fitted to known samples.
-
-        """
-
-        if len(self.samples) < degree + 1:
-            raise ValueError(f"Needs more samples: {len(self.samples)}<{degree} + 1")
-
-        model = PolynomialModel(
-            self.samples,
-            self.params.keys(),
-            degree,
-            interaction=True,
-            target="value",
-        )
-        model.fit(verbose)
-        return model
-
-    def model_GP():
-        """Gaussian process model of function"""
-        raise NotImplementedError("TODO: Lose coupling? senf samples to modeling?")
+    def optimal_params(self, loss="value"):
+        return self.samples.sort(loss).row(0, named=True)
 
     def _eval_samples(
         self,
@@ -329,8 +304,9 @@ class CoolSearch:
             on=self.params.keys(),
             how="anti",
         )
+        # cancel if no points to sample
         if len(grid_new) == 0:
-            print("No new points")
+            print("no new points!")
             return
 
         if verbose >= 1:
@@ -426,16 +402,14 @@ class CoolSearch:
         # load file based on extension
         if ext == ".parquet":
             loaded = pl.read_parquet(fp)
-            if loaded.schema != sample_schema:
-                raise ValueError(f"Incorrect file schema: {loaded.schema}")
         elif ext == ".csv":
-            loaded = pl.read_csv(fp, schema=sample_schema)
+            loaded = pl.read_csv(fp, schema_overrides=sample_schema)
         elif ext == ".json":
-            loaded = pl.read_json(fp, schema=sample_schema)
+            loaded = pl.read_json(fp, schema_overrides=sample_schema)
         else:
             raise ValueError(f"Unsupported file format: {ext}")
 
-        self.samples = loaded
+        return loaded
 
     def _save_samples(self):
         """Save samples to file"""

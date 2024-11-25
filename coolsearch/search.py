@@ -134,7 +134,9 @@ class CoolSearch:
         - params TODO!
         - data (tuple): data for training and validation
             - X_train, X_val, Y_train, Y_val
-        - metrics: TODO
+        - metrics: How to compare model prediction to Y_val
+            - a single callable (will be referred to  as "value")
+            - a dict of callables
         - n_jobs (int): number of parallel jobs. Default: 1
         - samples_file(str|None): file for loading and storing files on disk.
             - supported formats: `.parquet`, `.csv`, `.json`.
@@ -327,6 +329,9 @@ class CoolSearch:
             on=self.params.keys(),
             how="anti",
         )
+        if len(grid_new) == 0:
+            print("No new points")
+            return
 
         if verbose >= 1:
             print(f"Searching {len(grid_new)} new parameter points")

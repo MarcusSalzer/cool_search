@@ -375,8 +375,9 @@ class CoolSearch:
         p_fac = rt_sum / rt_total
         if verbose >= 1:
             print(f"Sum of runtime: {rt_sum:.2f} s. Elapsed time {rt_total:.2f} s.")
-            print(f"Overhead: {rt_total-rt_sum:.4f} s.")
-            if self.n_jobs > 1:
+            if self.n_jobs == 1:
+                print(f"Overhead: {rt_total-rt_sum:.4f} s.")
+            elif self.n_jobs > 1:
                 print(f"paralellness: {p_fac:.2f} " + ":)" if p_fac > 1 else ":/")
 
     def _eval_obj(self, params: dict) -> tuple[float | dict[str | float], float]:

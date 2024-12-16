@@ -92,7 +92,6 @@ class TestMesh(unittest.TestCase):
         p4 = Param(searchable=False, options=["z", "y"])
 
         m = make_mesh([p3, p1, p2, p4])
-        # print(m)
 
         self.assertEqual(m.shape, (9, 4))
         self.assertListEqual(sorted(m[p1.name].to_list()), [1, 1, 1, 3, 3, 3, 5, 5, 5])

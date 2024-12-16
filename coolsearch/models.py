@@ -15,7 +15,7 @@ class PolynomialModel:
         param_range: dict | None = None,
         target: str = "value",
         interaction: bool = True,
-        verbose=True,
+        verbose=False,
     ) -> None:
         if not interaction:
             raise NotImplementedError("only with interactions now")
@@ -139,7 +139,7 @@ class PolynomialModel:
         return marginals
 
 
-def polynomial_features(X: np.ndarray, d: int, verbose=True):
+def polynomial_features(X: np.ndarray, d: int, verbose=False):
     """Create polynomial features of terms up to a degree (including constant).
     ## parameters
     - X (ndarray): original feature matrix, shape (N, n_feat)

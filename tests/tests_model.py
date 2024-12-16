@@ -80,7 +80,7 @@ class TestPolyFeat(unittest.TestCase):
     def test_poly_1d(self):
         X = np.array([[1, 2, 3]]).T
         X_correct = np.array([[1, 1, 1], [1, 2, 3], [1, 4, 9], [1, 8, 27]]).T
-        X_new = polynomial_features(X, 3, verbose=False)
+        X_new = polynomial_features(X, 3)
         self.assertEqual(
             X_new.shape,
             X_correct.shape,

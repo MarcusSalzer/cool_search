@@ -1,7 +1,4 @@
 import unittest
-import polars as pl
-
-
 from coolsearch.search import CoolSearch
 
 
@@ -73,6 +70,27 @@ class TestCoolSearch3D(unittest.TestCase):
         grid = self.search.get_grid({"x": 7, "y": 4, "z": 3})
         self.assertEqual(grid.columns, ["x", "y", "z"], "wrong columns")
         self.assertEqual(len(grid), 7 * 4 * 3, "wrong length")
+
+
+class TestMultiOutput(unittest.TestCase):
+    def setUp(self) -> None:
+        def f(x, y):
+            val = x**2 + (y - 1) ** 2
+            val2 = 2 * val
+            return {"val_a": val, "val_b": val2}
+
+        self.objective = f
+        self.search = CoolSearch(
+            self.objective,
+            parameters={
+                "x": (-3.0, 3.0),
+                "y": (-4.0, 3.0),
+            },
+            n_jobs=1,
+        )
+
+    def test_m(self):
+        self.search.grid_search(2, verbose=0)
 
 
 if __name__ == "__main__":

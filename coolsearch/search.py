@@ -1,13 +1,16 @@
 from timeit import default_timer
 from typing import Callable, Literal
 import os
-
+import multiprocessing as mp
 import polars as pl
 from tqdm import tqdm
+from functools import partial
+
 
 from coolsearch.Param import Param
-from coolsearch.models import PolynomialModel
 from coolsearch.utility_functions import make_mesh
+from coolsearch import stats
+# from coolsearch import run_parallel
 
 try:
     import joblib
@@ -80,9 +83,6 @@ class CoolSearch:
         # this is permanent to allow serialization
         schema = {p_name: p.pl_dtype for p_name, p in self.params.items()}
 
-        # Add the things we're measuring to schema.
-        schema["value"] = pl.Float64
-
         # We will also measure runtime
         if "runtime" in schema.keys():
             raise ValueError("Sorry, `runtime` is reserved for tracking runtime.")
@@ -130,7 +130,7 @@ class CoolSearch:
         Create a `CoolSearch` for tuning a classifier/regressor.
 
         ## parameters
-        - model: A classifier/regressor that implements
+        - model: A classifier/regressor that implements...
         - params TODO!
         - data (tuple): data for training and validation
             - X_train, X_val, Y_train, Y_val
@@ -262,31 +262,14 @@ class CoolSearch:
         # idea. run sequentially, /and parallel?
         # allow for conditions to choose next step
 
-    def marginals(self) -> dict[str, pl.DataFrame]:
-        """Aggregate values over unique parameter values.
+    def marginals(self, target: str) -> dict[str, pl.DataFrame]:
+        """Compute marginals for some metric"""
+        if target not in self.schema.keys():
+            raise ValueError(f"No column of `{target}`")
+        return stats.marginals(self.samples, self.params.keys(), target, "all")
 
-        ## Returns
-        - marginals (dict[str,DataFrame]): aggregated values for each parameter.
-            - columns: parameter, mean, std, median
-        """
-        marginals = {}
-        for param in self.params.keys():
-            marginals[param] = (
-                self.samples.group_by(param)
-                .agg(
-                    pl.col("value").mean().alias("mean"),
-                    pl.col("value").std().alias("std"),
-                    pl.col("value").median().alias("median"),
-                    pl.col("value").min().alias("min"),
-                    pl.col("value").max().alias("max"),
-                )
-                .sort(param)
-            )
-
-        return marginals
-
-    def optimal_params(self, loss="value"):
-        return self.samples.sort(loss).row(0, named=True)
+    def optimal_params(self, target="value"):
+        return self.samples.sort(target).row(0, named=True)
 
     def _eval_samples(
         self,
@@ -326,13 +309,11 @@ class CoolSearch:
         runtimes = []
         if self.n_jobs > 1:
             # multi-thread mode
-            para = joblib.Parallel(n_jobs=self.n_jobs)
-            output = para(joblib.delayed(self._eval_obj)(p) for p in param_dicts)
-            for val, rt in output:
+            for val, rt in self.run_parallel(param_dicts):
                 values.append(val)
                 runtimes.append(rt)
         else:
-            # single-threaded mode
+            # single-thread mode
             for p in param_dicts:
                 val, rt = self._eval_obj(p)
                 values.append(val)
@@ -342,25 +323,24 @@ class CoolSearch:
         grid_new = grid_new.with_columns(
             runtime=pl.Series(runtimes),
         )
-        if all(isinstance(v, dict) for v in values):
-            keys = values[0].keys()
-            # insert multiple columns
-            grid_new = grid_new.with_columns(
-                (pl.Series(k, [v[k] for v in values]) for k in keys)
-            )
-        else:
-            # insert single value
-            grid_new = grid_new.with_columns(
-                pl.Series("value", values),
-            )
+
+        # insert columns from returned dicts
+        keys = values[0].keys()
+        grid_new = grid_new.with_columns(
+            # one series for each dict-key
+            (pl.Series(k, [v[k] for v in values]) for k in keys)
+        )
 
         # allow adding columns
         new_columns = set(grid_new.columns) - set(self.samples.columns)
         self.samples = self.samples.with_columns(
-            (pl.Series(col, [None] * len(self.samples)) for col in new_columns)
+            (
+                pl.Series(col, [None] * len(self.samples), dtype=pl.Float64)
+                for col in new_columns
+            )
         )
 
-        # ensure columns are sorted
+        # ensure columns are sorted, to concatenate
         cols = sorted(self.samples.columns)
         self.samples = self.samples.select(cols)
         grid_new = grid_new.select(cols)
@@ -370,6 +350,7 @@ class CoolSearch:
         if self.samples_file:
             self._save_samples()
 
+        # runtime information
         rt_sum = sum(runtimes)
         rt_total = default_timer() - t_start
         p_fac = rt_sum / rt_total
@@ -380,7 +361,16 @@ class CoolSearch:
             elif self.n_jobs > 1:
                 print(f"paralellness: {p_fac:.2f} " + ":)" if p_fac > 1 else ":/")
 
-    def _eval_obj(self, params: dict) -> tuple[float | dict[str | float], float]:
+    def run_parallel(self, param_dicts) -> list[tuple[dict[str, float], float]]:
+        """Evaluate objective in parallel."""
+        mp.set_start_method("spawn", force=True)
+        with mp.get_context("spawn").Pool(self.n_jobs) as pool:
+            # bind function and run in pool
+            bound_func = partial(self._eval_obj)
+            output = pool.map(bound_func, param_dicts)
+        return output
+
+    def _eval_obj(self, params: dict) -> tuple[dict[str, float], float]:
         """Compute the objective function for a parameter point
         ## parameters
         - params (dict): named parameters to objective
@@ -389,7 +379,12 @@ class CoolSearch:
         - runtime (float): runtime in seconds
         """
         ts = default_timer()
-        return self._objective(**params), default_timer() - ts
+        res = self._objective(**params)
+
+        # wrap in dict if scalar
+        if not isinstance(res, dict):
+            res = {"value": res}
+        return res, default_timer() - ts
 
     def _load_samples(self):
         """Load samples from file"""

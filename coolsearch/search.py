@@ -300,7 +300,7 @@ class CoolSearch:
                 )
                 print(f"Estimated runtime: {est_runtime:.2f} s.")
 
-        param_dicts = grid_new.iter_rows(named=True)
+        param_dicts = list(grid_new.iter_rows(named=True))
 
         if verbose >= 1:
             param_dicts = tqdm(param_dicts)
@@ -357,7 +357,7 @@ class CoolSearch:
         if verbose >= 1:
             print(f"Sum of runtime: {rt_sum:.2f} s. Elapsed time {rt_total:.2f} s.")
             if self.n_jobs == 1:
-                print(f"Overhead: {rt_total-rt_sum:.4f} s.")
+                print(f"Overhead: {rt_total - rt_sum:.4f} s.")
             elif self.n_jobs > 1:
                 print(f"paralellness: {p_fac:.2f} " + ":)" if p_fac > 1 else ":/")
 
